@@ -2,7 +2,7 @@ from django.urls import path
 from apps.orders.views import (
     PanierView, PanierItemListView, PanierItemDetailView,
     AdresseLivraisonListView, AdresseLivraisonDetailView, AdresseLivraisonSetDefaultView,
-    CheckoutView, CommandeListView, CommandeDetailView
+    CheckoutView, CommandeListView, CommandeDetailView, EstimateDeliveryView
 )
 
 app_name = 'orders'
@@ -18,7 +18,8 @@ urlpatterns = [
     path('addresses/<int:pk>/', AdresseLivraisonDetailView.as_view(), name='address-detail'),
     path('addresses/<int:pk>/set-default/', AdresseLivraisonSetDefaultView.as_view(), name='address-set-default'),
 
-    # Commandes et Checkout
+    # Commandes, Checkout & Estimation
+    path('estimate-delivery/', EstimateDeliveryView.as_view(), name='estimate-delivery'),
     path('checkout/', CheckoutView.as_view(), name='checkout'),
     path('', CommandeListView.as_view(), name='order-list'),
     path('<int:pk>/', CommandeDetailView.as_view(), name='order-detail'),

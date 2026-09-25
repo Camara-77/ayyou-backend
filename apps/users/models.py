@@ -266,8 +266,21 @@ class ProfilLivreur(models.Model):
     modele = models.CharField(_('modèle'), max_length=100, blank=True, default='')
     immatriculation = models.CharField(_('immatriculation'), max_length=50, blank=True, default='')
 
+    photo_avatar = models.URLField(_("photo d'avatar"), max_length=500, blank=True, null=True)
+    date_expiration_assurance = models.DateField(_("date d'expiration assurance"), null=True, blank=True)
+    statut_assurance = models.CharField(_("statut de l'assurance"), max_length=30, blank=True, default='CONFORME')
+    equipements_certifies = models.CharField(_('équipements certifiés'), max_length=255, blank=True, default='')
+    secteur_intervention = models.CharField(_("secteur d'intervention"), max_length=255, blank=True, default='')
+    type_compte_reversement = models.CharField(_('type de compte reversement'), max_length=100, blank=True, default='')
+    numero_reversement = models.CharField(_('numéro de compte reversement'), max_length=50, blank=True, default='')
+    comptes_reversement = models.JSONField(_('comptes de reversement'), default=list, blank=True)
+
     date_creation = models.DateTimeField(_('date de création'), auto_now_add=True)
     date_modification = models.DateTimeField(_('date de modification'), auto_now=True)
+
+    @property
+    def matricule(self) -> str:
+        return f"#AY-{self.id + 7700:04d}"
 
     class Meta:
         verbose_name = _('Profil Livreur')

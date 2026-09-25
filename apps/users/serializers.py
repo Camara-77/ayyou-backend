@@ -160,12 +160,15 @@ class DocumentLivreurSerializer(serializers.ModelSerializer):
 
 class ProfilLivreurSerializer(serializers.ModelSerializer):
     """
-    Serializer pour le profil spécifique au Livreur AYYOU Pro.
+    Serializer pour la consultation et la mise à jour du profil Livreur AYYOU Pro.
+    Gère la mise à jour des informations de l'Utilisateur et du ProfilLivreur.
     """
-    prenom = serializers.ReadOnlyField(source='utilisateur.prenom')
-    nom = serializers.ReadOnlyField(source='utilisateur.nom')
-    email = serializers.ReadOnlyField(source='utilisateur.email')
-    numero_telephone = serializers.ReadOnlyField(source='utilisateur.numero_telephone')
+    prenom = serializers.CharField(source='utilisateur.prenom', required=False)
+    nom = serializers.CharField(source='utilisateur.nom', required=False)
+    email = serializers.CharField(source='utilisateur.email', required=False)
+    numero_telephone = serializers.CharField(source='utilisateur.numero_telephone', required=False)
+    est_verifie = serializers.BooleanField(source='utilisateur.est_verifie', read_only=True)
+    matricule = serializers.ReadOnlyField()
     documents = DocumentLivreurSerializer(many=True, read_only=True)
     statut_verification_display = serializers.CharField(source='get_statut_verification_display', read_only=True)
     type_vehicule_display = serializers.CharField(source='get_type_vehicule_display', read_only=True)
@@ -178,6 +181,8 @@ class ProfilLivreurSerializer(serializers.ModelSerializer):
             'nom',
             'email',
             'numero_telephone',
+            'est_verifie',
+            'matricule',
             'statut_verification',
             'statut_verification_display',
             'est_disponible',
@@ -189,9 +194,56 @@ class ProfilLivreurSerializer(serializers.ModelSerializer):
             'marque',
             'modele',
             'immatriculation',
+            'photo_avatar',
+            'date_expiration_assurance',
+            'statut_assurance',
+            'equipements_certifies',
+            'secteur_intervention',
+            'type_compte_reversement',
+            'numero_reversement',
+            'comptes_reversement',
             'documents',
             'date_creation',
             'date_modification',
         ]
-        read_only_fields = ['id', 'statut_verification', 'date_creation', 'date_modification']
+        read_only_fields = ['id', 'statut_verification', 'matricule', 'est_verifie', 'date_creation', 'date_modification']
+
+    def validate_email(self, value):
+        if value:
+            value = value.strip().lower()
+            user = self.instance.utilisateur if self.instance else None
+            user_id = user.id if user else None
+            if Utilisateur.objects.filter(email=value).exclude(id=user_id).exists():
+                raise serializers.ValidationError(_("Cette adresse email est déjà utilisée par un autre compte."))
+        return value
+
+    def validate_numero_telephone(self, value):
+        if value:
+            value = value.strip()
+            user = self.instance.utilisateur if self.instance else None
+            user_id = user.id if user else None
+            if Utilisateur.objects.filter(numero_telephone=value).exclude(id=user_id).exists():
+                raise serializers.ValidationError(_("Ce numéro de téléphone est déjà utilisé par un autre compte."))
+        return value
+
+    def update(self, instance, validated_data):
+        utilisateur_data = validated_data.pop('utilisateur', {})
+
+        # Mettre à jour l'utilisateur lié
+        utilisateur = instance.utilisateur
+        updated_user = False
+        for attr in ['prenom', 'nom', 'email', 'numero_telephone']:
+            if attr in utilisateur_data:
+                setattr(utilisateur, attr, utilisateur_data[attr])
+                updated_user = True
+
+        if updated_user:
+            utilisateur.save()
+
+        # Mettre à jour le profil livreur
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+        return instance
 

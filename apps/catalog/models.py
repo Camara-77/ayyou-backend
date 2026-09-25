@@ -79,6 +79,24 @@ class Etablissement(models.Model):
     nombre_videos = models.IntegerField(_('nombre de vidéos'), default=0)
     est_verifie = models.BooleanField(_('est vérifié par AYYOU'), default=False)
 
+    STATUT_EN_ATTENTE = 'EN_ATTENTE'
+    STATUT_VALIDE = 'VALIDE'
+    STATUT_REFUSE = 'REFUSE'
+
+    CHOIX_STATUT_VERIFICATION = [
+        (STATUT_EN_ATTENTE, _('En attente')),
+        (STATUT_VALIDE, _('Validé')),
+        (STATUT_REFUSE, _('Refusé')),
+    ]
+
+    statut_verification = models.CharField(
+        _('statut de vérification'),
+        max_length=20,
+        choices=CHOIX_STATUT_VERIFICATION,
+        default=STATUT_EN_ATTENTE,
+        db_index=True
+    )
+
     date_creation = models.DateTimeField(_('date de création'), auto_now_add=True)
     date_modification = models.DateTimeField(_('date de modification'), auto_now=True)
 
@@ -87,8 +105,78 @@ class Etablissement(models.Model):
         verbose_name_plural = _('Établissements')
         ordering = ['-date_creation']
 
+    def clean(self):
+        super().clean()
+        if self.statut_verification == self.STATUT_VALIDE:
+            self.est_verifie = True
+        else:
+            self.est_verifie = False
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.nom} ({self.get_type_etablissement_display()})"
+
+
+class DocumentEtablissement(models.Model):
+    """
+    Documents justificatifs déposés par le Restaurant ou Vendeur (NINEA, Hygiène, CNI du gérant, etc.).
+    """
+    TYPE_REGISTRE_COMMERCE = 'REGISTRE_COMMERCE'
+    TYPE_CERTIFICAT_HYGIENE = 'CERTIFICAT_HYGIENE'
+    TYPE_CNI_GERANT = 'CNI_GERANT'
+    TYPE_AUTRE = 'AUTRE'
+
+    CHOIX_TYPE_DOCUMENT = [
+        (TYPE_REGISTRE_COMMERCE, _("Registre de commerce / NINEA")),
+        (TYPE_CERTIFICAT_HYGIENE, _("Certificat d'hygiène")),
+        (TYPE_CNI_GERANT, _("CNI du gérant")),
+        (TYPE_AUTRE, _("Autre")),
+    ]
+
+    STATUT_EN_ATTENTE = 'EN_ATTENTE'
+    STATUT_VALIDE = 'VALIDE'
+    STATUT_REFUSE = 'REFUSE'
+
+    CHOIX_STATUT_DOCUMENT = [
+        (STATUT_EN_ATTENTE, _('En attente')),
+        (STATUT_VALIDE, _('Validé')),
+        (STATUT_REFUSE, _('Refusé')),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    etablissement = models.ForeignKey(
+        Etablissement,
+        on_delete=models.CASCADE,
+        related_name='documents',
+        verbose_name=_('établissement')
+    )
+    type_document = models.CharField(
+        _('type de document'),
+        max_length=30,
+        choices=CHOIX_TYPE_DOCUMENT
+    )
+    fichier_url_ou_reference = models.CharField(_('fichier URL ou référence'), max_length=500)
+    statut = models.CharField(
+        _('statut'),
+        max_length=20,
+        choices=CHOIX_STATUT_DOCUMENT,
+        default=STATUT_EN_ATTENTE
+    )
+    date_verification = models.DateTimeField(_('date de vérification'), null=True, blank=True)
+    commentaire = models.TextField(_('commentaire'), blank=True, default='')
+
+    date_creation = models.DateTimeField(_('date de création'), auto_now_add=True)
+    date_modification = models.DateTimeField(_('date de modification'), auto_now=True)
+
+    class Meta:
+        verbose_name = _('Document Établissement')
+        verbose_name_plural = _('Documents Établissements')
+
+    def __str__(self):
+        return f"Document {self.get_type_document_display()} - {self.etablissement.nom}"
 
 
 class Produit(models.Model):
@@ -227,6 +315,7 @@ class PublicationFeed(models.Model):
         verbose_name=_('produit associé')
     )
     media_url = models.URLField(_('URL du média'), max_length=500)
+    cloudinary_public_id = models.CharField(_('ID public Cloudinary'), max_length=255, blank=True, null=True)
     type_media = models.CharField(_('type de média'), max_length=10, choices=CHOIX_MEDIAS, default=TYPE_MEDIA_IMAGE)
     duree_video = models.CharField(_('durée vidéo (ex: 2:30)'), max_length=20, blank=True, default='')
     max_duree_secondes = models.IntegerField(_('durée max en secondes'), default=180)

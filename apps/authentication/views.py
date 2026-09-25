@@ -100,3 +100,25 @@ class LoginView(APIView):
 
         return Response(auth_data, status=status.HTTP_200_OK)
 
+
+class GoogleAuthView(APIView):
+    """
+    API de connexion Client via Google OAuth ID Token.
+    POST /api/auth/google/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        token = request.data.get('token')
+        if not token:
+            return Response({'errors': {'token': ['Le token Google est obligatoire.']}}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            auth_data = LoginService.authenticate_google(token)
+            return Response(auth_data, status=status.HTTP_200_OK)
+        except ValidationError as exc:
+            return Response({'errors': exc.detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'errors': {'detail': str(exc)}}, status=status.HTTP_400_BAD_REQUEST)
+
+

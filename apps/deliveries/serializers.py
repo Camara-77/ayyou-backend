@@ -22,9 +22,17 @@ class LivraisonSerializer(serializers.ModelSerializer):
     # Informations Livreur
     livreur_id = serializers.ReadOnlyField(source='livreur.id', allow_null=True)
     livreur_nom_complet = serializers.SerializerMethodField()
+    livreur_telephone = serializers.ReadOnlyField(source='livreur.utilisateur.numero_telephone', allow_null=True)
+    livreur_vehicule = serializers.SerializerMethodField()
+    livreur_immatriculation = serializers.ReadOnlyField(source='livreur.immatriculation', allow_null=True)
+    livreur_photo = serializers.ReadOnlyField(source='livreur.photo_avatar', allow_null=True)
+    livreur_latitude = serializers.ReadOnlyField(source='livreur.latitude_actuelle', allow_null=True)
+    livreur_longitude = serializers.ReadOnlyField(source='livreur.longitude_actuelle', allow_null=True)
+    livreur_derniere_position_date = serializers.ReadOnlyField(source='livreur.date_derniere_position', allow_null=True)
 
-    # Informations Établissements & Articles à récupérer
+    acceptance_deadline = serializers.SerializerMethodField()
     etablissements = serializers.SerializerMethodField()
+    date_attribution = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Livraison
@@ -45,6 +53,13 @@ class LivraisonSerializer(serializers.ModelSerializer):
             'livreur',
             'livreur_id',
             'livreur_nom_complet',
+            'livreur_telephone',
+            'livreur_vehicule',
+            'livreur_immatriculation',
+            'livreur_photo',
+            'livreur_latitude',
+            'livreur_longitude',
+            'livreur_derniere_position_date',
             'etablissements',
             'token_qr',
             'code_validation',
@@ -52,6 +67,8 @@ class LivraisonSerializer(serializers.ModelSerializer):
             'methode_validation',
             'methode_validation_display',
             'date_validation',
+            'date_attribution',
+            'acceptance_deadline',
             'created_at',
             'updated_at'
         ]
@@ -64,13 +81,31 @@ class LivraisonSerializer(serializers.ModelSerializer):
             'est_validee',
             'methode_validation',
             'date_validation',
+            'date_attribution',
+            'acceptance_deadline',
             'created_at',
             'updated_at'
         ]
 
+    def get_acceptance_deadline(self, obj) -> str | None:
+        from datetime import timedelta
+        # Le délai d'acceptation ne s'applique QUE si un livreur est affecté ET que la livraison n'est pas encore acceptée
+        if obj.livreur_id and obj.statut in [Livraison.STATUT_EN_ATTENTE, Livraison.STATUT_AFFECTEE] and obj.date_attribution:
+            deadline = obj.date_attribution + timedelta(minutes=2)
+            return deadline.isoformat()
+        return None
+
     def get_livreur_nom_complet(self, obj) -> str | None:
         if obj.livreur and obj.livreur.utilisateur:
             return obj.livreur.utilisateur.get_full_name()
+        return None
+
+    def get_livreur_vehicule(self, obj) -> str | None:
+        if obj.livreur:
+            modele = getattr(obj.livreur, 'modele', '') or getattr(obj.livreur, 'type_vehicule', '') or ''
+            marque = getattr(obj.livreur, 'marque', '') or ''
+            res = f"{marque} {modele}".strip()
+            return res if res else "Moto AYYOU"
         return None
 
     def get_etablissements(self, obj):
@@ -96,7 +131,23 @@ class LivraisonSerializer(serializers.ModelSerializer):
                 'longitude': str(etab.longitude) if etab.longitude is not None else None,
                 'lignes': lignes_data
             })
-        return res
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            user = request.user
+            is_driver = (
+                hasattr(user, 'profil_livreur') and user.profil_livreur is not None
+            )
+            query_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+            as_client = query_params.get('as') == 'client'
+            is_owner = (instance.commande and instance.commande.utilisateur_id == user.id)
+
+            # Ne JAMAIS exposer le PIN ou le QR Code au livreur dans les charges utiles d'API
+            if (is_driver and not as_client) and not is_owner:
+                ret.pop('code_validation', None)
+                ret.pop('token_qr', None)
+        return ret
 
 
 class ValidateQrSerializer(serializers.Serializer):
@@ -105,4 +156,4 @@ class ValidateQrSerializer(serializers.Serializer):
 
 class ValidateCodeSerializer(serializers.Serializer):
     commande = serializers.IntegerField(required=True)
-    code_validation = serializers.CharField(max_length=6, min_length=6, required=True)
+    code_validation = serializers.CharField(max_length=4, min_length=4, required=True)

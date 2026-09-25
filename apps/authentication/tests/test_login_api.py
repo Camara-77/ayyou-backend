@@ -258,4 +258,59 @@ class LoginAPITestCase(APITestCase):
         self.assertEqual(user_auth.id, self.user.id)
         self.assertEqual(user_auth.email, self.email)
 
+    def test_23_login_pro_status_response(self):
+        """23. Vérifier que le login retourne pro_status, roles et merchant_status/driver_status."""
+        from apps.users.models import Role, UtilisateurRole
+        from apps.catalog.models import Etablissement
+
+        # 1. Tester utilisateur Client pur
+        res1 = self.client.post(self.login_url, {'identifier': self.email, 'password': self.password})
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertEqual(res1.data['utilisateur']['pro_status'], 'NONE')
+        self.assertIn('CLIENT', res1.data['utilisateur']['roles'])
+
+        # 2. Inscrire un gérant de restaurant (EN_ATTENTE)
+        resto_payload = {
+            "email": "resto.login.test@ayyou.com",
+            "numero_telephone": "+221778889900",
+            "password": "Password123!",
+            "password_confirm": "Password123!",
+            "prenom": "Resto",
+            "nom": "Owner",
+            "nom_etablissement": "Resto Login Test",
+            "adresse": "Dakar"
+        }
+        self.client.post(reverse('pro_api:register_restaurant'), resto_payload, format='json')
+
+        # Login restaurant candidate (EN_ATTENTE)
+        res2 = self.client.post(self.login_url, {'identifier': "resto.login.test@ayyou.com", 'password': "Password123!"})
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        self.assertEqual(res2.data['utilisateur']['pro_status'], 'PENDING')
+        self.assertEqual(res2.data['utilisateur']['merchant_status'], 'EN_ATTENTE')
+        self.assertIn('RESTAURANT', res2.data['utilisateur']['roles'])
+
+        # 3. Approuver l'établissement par Super Admin
+        etab = Etablissement.objects.get(id=res2.data['utilisateur']['etablissement']['id'])
+        etab.statut_verification = Etablissement.STATUT_VALIDE
+        etab.save()
+
+        # Login restaurant candidate (VALIDE)
+        res3 = self.client.post(self.login_url, {'identifier': "resto.login.test@ayyou.com", 'password': "Password123!"})
+        self.assertEqual(res3.status_code, status.HTTP_200_OK)
+        self.assertEqual(res3.data['utilisateur']['pro_status'], 'APPROVED')
+        self.assertEqual(res3.data['utilisateur']['merchant_status'], 'VALIDE')
+        self.assertTrue(res3.data['utilisateur']['etablissement']['est_verifie'])
+
+        # 4. Rejeter l'établissement par Super Admin
+        etab.statut_verification = Etablissement.STATUT_REFUSE
+        etab.save()
+
+        # Login restaurant candidate (REFUSE)
+        res4 = self.client.post(self.login_url, {'identifier': "resto.login.test@ayyou.com", 'password': "Password123!"})
+        self.assertEqual(res4.status_code, status.HTTP_200_OK)
+        self.assertEqual(res4.data['utilisateur']['pro_status'], 'REJECTED')
+        self.assertEqual(res4.data['utilisateur']['merchant_status'], 'REFUSE')
+        self.assertFalse(res4.data['utilisateur']['etablissement']['est_verifie'])
+
+
 

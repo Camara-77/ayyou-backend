@@ -1,0 +1,15 @@
+AYYOU - {{ titre }}
+========================================
+
+Bonjour {% if destinataire_nom %}{{ destinataire_nom }}{% else %}cher utilisateur{% endif %},
+
+{{ titre }}
+
+{{ message }}
+
+{% if reference_type and reference_id %}
+Référence: {{ reference_type }} #{{ reference_id }}
+{% endif %}
+
+----------------------------------------
+Cet email automatique vous a été envoyé par la plateforme AYYOU.

@@ -21,6 +21,7 @@ from .serializers import (
     PublicationFeedSerializer,
     LikeProduitSerializer
 )
+from .services import CloudinaryFeedService
 
 
 class StandardCatalogPagination(PageNumberPagination):
@@ -167,13 +168,25 @@ class PublicationFeedListView(APIView):
     """
     GET /api/catalog/feed/
     Liste des publications photo/vidéo pour le Feed style TikTok.
+    POST /api/catalog/feed/
+    Publication d'une vidéo/photo dans le Feed AYYOU par un RESTAURANT ou VENDEUR.
     """
     permission_classes = [permissions.AllowAny]
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
 
     def get(self, request):
         queryset = PublicationFeed.objects.select_related(
             'etablissement', 'produit', 'produit__etablissement', 'produit__categorie'
         ).all().order_by('-date_publication')
+
+        # Filtre par établissement
+        etablissement = request.query_params.get('etablissement') or request.query_params.get('etablissement_id')
+        if etablissement and etablissement.isdigit():
+            queryset = queryset.filter(etablissement_id=int(etablissement))
 
         paginator = StandardCatalogPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
@@ -183,6 +196,92 @@ class PublicationFeedListView(APIView):
 
         serializer = PublicationFeedSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        # Chercher l'établissement appartenant à l'utilisateur connecté (RESTAURANT ou VENDEUR)
+        etablissement = Etablissement.objects.filter(proprietaire=request.user).first()
+        if not etablissement:
+            return Response(
+                {"detail": _("Seul un établissement professionnel actif (Restaurant ou Vendeur) peut publier des vidéos.")},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        video_file = request.FILES.get('video_file') or request.FILES.get('file') or request.FILES.get('media')
+        media_url = request.data.get('media_url')
+        produit_id = request.data.get('produit_id') or request.data.get('produit')
+        duree_secondes = request.data.get('duree_secondes') or request.data.get('duration')
+
+        if duree_secondes:
+            try:
+                duree_secondes = int(duree_secondes)
+            except (ValueError, TypeError):
+                duree_secondes = None
+
+        if duree_secondes and duree_secondes > 180:
+            return Response(
+                {"detail": _("La durée maximale de la vidéo est de 3 minutes (180 secondes).")},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        upload_data = {}
+        if video_file:
+            try:
+                upload_data = CloudinaryFeedService.upload_feed_video(video_file, duree_secondes=duree_secondes)
+            except Exception as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        elif media_url:
+            upload_data = {
+                "media_url": media_url,
+                "cloudinary_public_id": request.data.get('cloudinary_public_id', ''),
+                "duree_video": "2:00"
+            }
+        else:
+            return Response(
+                {"detail": _("Veuillez fournir un fichier vidéo (video_file) ou une URL de média.")},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        produit = None
+        if produit_id:
+            produit = Produit.objects.filter(pk=produit_id, etablissement=etablissement).first()
+
+        publication = PublicationFeed.objects.create(
+            etablissement=etablissement,
+            produit=produit,
+            media_url=upload_data["media_url"],
+            cloudinary_public_id=upload_data.get("cloudinary_public_id", ""),
+            type_media=PublicationFeed.TYPE_MEDIA_VIDEO,
+            duree_video=upload_data.get("duree_video", "2:00"),
+            max_duree_secondes=180
+        )
+
+        serializer = PublicationFeedSerializer(publication, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class PublicationFeedDetailView(APIView):
+    """
+    DELETE /api/catalog/feed/{id}/
+    Supprime une publication vidéo du Feed et retire le fichier média sur Cloudinary.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, pk):
+        publication = get_object_or_404(PublicationFeed.objects.select_related('etablissement'), pk=pk)
+
+        # Vérifier la propriété de l'établissement
+        if publication.etablissement.proprietaire != request.user:
+            return Response(
+                {"detail": _("Vous n'avez pas la permission de supprimer cette publication.")},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Supprimer le média de Cloudinary s'il possède un public_id
+        if publication.cloudinary_public_id:
+            CloudinaryFeedService.delete_feed_video(publication.cloudinary_public_id)
+
+        publication.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class LikeProduitView(APIView):

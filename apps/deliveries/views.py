@@ -12,6 +12,9 @@ from apps.deliveries.services import DeliveryService
 from apps.deliveries.permissions import IsLivreurValide
 from apps.users.models import Role, ProfilLivreur
 from apps.users.serializers import ProfilLivreurSerializer, DocumentLivreurSerializer
+from apps.payments.models import Payout
+from apps.payments.serializers import PayoutSerializer
+from decimal import Decimal
 
 
 class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
@@ -23,7 +26,7 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_permissions(self):
-        if self.action in ['available', 'accept', 'pickup']:
+        if self.action in ['available', 'accept', 'decline', 'arrive_restaurant', 'pickup', 'stats', 'payout', 'update_location']:
             return [permissions.IsAuthenticated(), IsLivreurValide()]
         return [permissions.IsAuthenticated()]
 
@@ -73,7 +76,10 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
         """
         GET /api/deliveries/available/
         Retourne la liste des missions actuellement disponibles (non affectées).
+        Effectue une purge automatique préalable des attributions expirées (> 2 min).
         """
+        DeliveryService.expire_expired_deliveries()
+
         queryset = Livraison.objects.filter(
             livreur__isnull=True,
             statut__in=[
@@ -102,6 +108,52 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             livraison = DeliveryService.accepter_mission(pk, profil_livreur)
         except ValidationError as e:
+            err_msg = str(e.message if hasattr(e, 'message') else e)
+            if "expiré" in err_msg.lower():
+                from django.utils import timezone
+                Livraison.objects.filter(pk=pk).update(
+                    livreur=None,
+                    statut=Livraison.STATUT_EN_ATTENTE,
+                    date_attribution=None,
+                    updated_at=timezone.now()
+                )
+            return Response(
+                {'detail': err_msg},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        output_serializer = LivraisonSerializer(livraison, context={'request': request})
+        return Response(output_serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='decline')
+    def decline(self, request, pk=None):
+        """
+        POST /api/deliveries/{id}/decline/
+        Déclin/Refus d'une mission affectée par un livreur validé.
+        Libère l'attribution de la livraison pour la remettre en attente.
+        """
+        profil_livreur = getattr(request.user, 'profil_livreur', None)
+        try:
+            livraison = DeliveryService.refuser_mission(pk, profil_livreur)
+        except ValidationError as e:
+            return Response(
+                {'detail': str(e.message if hasattr(e, 'message') else e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        output_serializer = LivraisonSerializer(livraison, context={'request': request})
+        return Response(output_serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='arrive-restaurant')
+    def arrive_restaurant(self, request, pk=None):
+        """
+        POST /api/deliveries/{id}/arrive-restaurant/
+        Déclaration d'arrivée du livreur au restaurant/vendeur.
+        """
+        profil_livreur = getattr(request.user, 'profil_livreur', None)
+        try:
+            livraison = DeliveryService.arriver_restaurant(pk, profil_livreur)
+        except ValidationError as e:
             return Response(
                 {'detail': str(e.message if hasattr(e, 'message') else e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -124,6 +176,65 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
                 {'detail': str(e.message if hasattr(e, 'message') else e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        output_serializer = LivraisonSerializer(livraison, context={'request': request})
+        return Response(output_serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        """
+        GET /api/deliveries/stats/
+        Retourne les statistiques réelles BDD de la journée pour le livreur connecté.
+        """
+        profil_livreur = getattr(request.user, 'profil_livreur', None)
+        if not profil_livreur:
+            return Response(
+                {'detail': "Profil livreur introuvable."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        stats_data = DeliveryService.obtenir_statistiques_livreur(profil_livreur)
+        return Response(stats_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['patch', 'put', 'post'], url_path='location')
+    def update_location(self, request, pk=None):
+        """
+        PATCH /api/deliveries/{id}/location/
+        Mise à jour en temps réel des coordonnées GPS du livreur pour cette livraison.
+        Sécurité : Seul le livreur attribué à cette livraison peut poster sa position (403 sinon).
+        """
+        livraison = self.get_object()
+        profil_livreur = getattr(request.user, 'profil_livreur', None)
+
+        if not livraison.livreur or livraison.livreur != profil_livreur:
+            return Response(
+                {'detail': "Vous n'êtes pas le livreur attribué à cette livraison."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        lat = request.data.get('latitude')
+        lng = request.data.get('longitude')
+
+        if lat is None or lng is None:
+            return Response(
+                {'detail': "Les paramètres latitude et longitude sont requis."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        from django.utils import timezone
+        try:
+            lat_num = float(lat)
+            lng_num = float(lng)
+        except (ValueError, TypeError):
+            return Response(
+                {'detail': "Les coordonnées GPS doivent être des nombres décimaux valides."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        profil_livreur.latitude_actuelle = lat_num
+        profil_livreur.longitude_actuelle = lng_num
+        profil_livreur.date_derniere_position = timezone.now()
+        profil_livreur.save(update_fields=['latitude_actuelle', 'longitude_actuelle', 'date_derniere_position'])
 
         output_serializer = LivraisonSerializer(livraison, context={'request': request})
         return Response(output_serializer.data, status=status.HTTP_200_OK)
@@ -169,19 +280,77 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
         output_serializer = LivraisonSerializer(livraison, context={'request': request})
         return Response(output_serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['get'], url_path='profile')
+    @action(detail=False, methods=['get', 'patch', 'put'], url_path='profile')
     def get_profile(self, request):
         """
-        GET /api/deliveries/profile/
-        Retourne les informations du profil livreur connecté.
+        GET /api/deliveries/profile/ - Consultation du profil livreur connecté.
+        PATCH/PUT /api/deliveries/profile/ - Mise à jour du profil livreur (identité, téléphone, véhicule, zones, comptes).
         """
         if not hasattr(request.user, 'profil_livreur') or not request.user.profil_livreur:
             return Response(
                 {'detail': "Profil livreur introuvable pour cet utilisateur."},
                 status=status.HTTP_404_NOT_FOUND
             )
-        serializer = ProfilLivreurSerializer(request.user.profil_livreur)
+
+        profil = request.user.profil_livreur
+
+        # Isolation des rôles : Seul un livreur avec le rôle LIVREUR peut lire/modifier son profil
+        if not request.user.roles_attribues.filter(role__nom=Role.LIVREUR).exists():
+            return Response(
+                {'detail': "Seul un utilisateur ayant le rôle LIVREUR peut accéder au profil livreur."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if request.method in ['PATCH', 'PUT']:
+            serializer = ProfilLivreurSerializer(profil, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        serializer = ProfilLivreurSerializer(profil)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='profile/photo')
+    def upload_photo(self, request):
+        """
+        POST /api/deliveries/profile/photo/
+        Upload de la photo d'avatar réelle du livreur vers Cloudinary (ou enregistrement URL).
+        """
+        if not hasattr(request.user, 'profil_livreur') or not request.user.profil_livreur:
+            return Response(
+                {'detail': "Profil livreur introuvable."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        profil = request.user.profil_livreur
+        photo_url = request.data.get('photo_url')
+        file_obj = request.FILES.get('photo') or request.FILES.get('avatar')
+
+        if file_obj:
+            # Upload vers Cloudinary si configuré
+            try:
+                import cloudinary
+                import cloudinary.uploader
+                upload_res = cloudinary.uploader.upload(file_obj, folder="ayyou/drivers/avatars")
+                photo_url = upload_res.get('secure_url') or upload_res.get('url')
+            except Exception as e:
+                # Fallback si Cloudinary local non-configuré: enregistrer une référence d'image valide
+                photo_url = f"/media/avatars/driver_{profil.id}_{file_obj.name}"
+
+        if not photo_url:
+            return Response(
+                {'detail': "Aucun fichier photo ou URL valide fournie."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        profil.photo_avatar = photo_url
+        profil.save(update_fields=['photo_avatar'])
+
+        return Response({
+            'message': "Photo d'avatar mise à jour avec succès.",
+            'photo_url': photo_url,
+            'photo_avatar': photo_url
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['patch', 'post'], url_path='profile/availability')
     def update_availability(self, request):
@@ -250,3 +419,40 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
         documents = request.user.profil_livreur.documents.all()
         serializer = DocumentLivreurSerializer(documents, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='payout')
+    def payout(self, request):
+        """
+        POST /api/deliveries/payout/
+        Permet à un livreur validé de demander un retrait/versement de ses gains.
+        """
+        profil = getattr(request.user, 'profil_livreur', None)
+        if not profil or profil.statut_verification != ProfilLivreur.STATUT_VALIDE:
+            return Response(
+                {'detail': "Seul un livreur validé par l'administration peut effectuer une demande de versement."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        montant_raw = request.data.get('montant')
+        methode = request.data.get('methode', 'WAVE')
+
+        try:
+            montant = Decimal(str(montant_raw))
+            if montant <= Decimal('0.00'):
+                raise ValueError()
+        except (ValueError, TypeError):
+            return Response(
+                {'detail': "Le montant transmis doit être strictement supérieur à zéro."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        payout_obj = Payout.objects.create(
+            livreur=profil,
+            montant=montant,
+            methode=methode,
+            statut=Payout.STATUT_EN_ATTENTE
+        )
+
+        serializer = PayoutSerializer(payout_obj)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+

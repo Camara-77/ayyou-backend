@@ -85,9 +85,26 @@ class PaymentService:
         facture.paiement = paiement
         facture.save(update_fields=['est_payee', 'date_paiement', 'paiement'])
 
-        # Génération automatique de la fiche de Livraison avec QR Token et Code de validation
-        from apps.deliveries.services import DeliveryService
-        DeliveryService.creer_livraison(commande)
+        # Création d'une Notification Client Idempotente (si non existante)
+        if commande.utilisateur:
+            from apps.notifications.models import Notification
+            notif_ref = str(commande.id)
+            deja_notifie = Notification.objects.filter(
+                utilisateur=commande.utilisateur,
+                reference_type='Commande',
+                reference_id=notif_ref,
+                titre="Paiement confirmé"
+            ).exists()
+
+            if not deja_notifie:
+                Notification.objects.create(
+                    utilisateur=commande.utilisateur,
+                    titre="Paiement confirmé",
+                    message=f"Votre paiement pour la commande #{commande.numero_commande} a été confirmé.",
+                    type_notification='ORDER',
+                    reference_type='Commande',
+                    reference_id=notif_ref
+                )
 
         return paiement
 

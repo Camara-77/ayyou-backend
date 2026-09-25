@@ -227,3 +227,63 @@ class Facture(models.Model):
     def __str__(self):
         statut = "Acquittée" if self.est_payee else "Non payée"
         return f"Facture {self.numero_facture} ({self.montant_total} FCFA) - {statut}"
+
+
+class Payout(models.Model):
+    """
+    Modèle représentant un versement/retrait de gains pour un livreur AYYOU.
+    """
+    STATUT_EN_ATTENTE = 'EN_ATTENTE'
+    STATUT_TRAITE = 'TRAITE'
+    STATUT_ECHOUE = 'ECHOUE'
+
+    CHOIX_STATUTS = [
+        (STATUT_EN_ATTENTE, _('En attente')),
+        (STATUT_TRAITE, _('Traité')),
+        (STATUT_ECHOUE, _('Échoué')),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    livreur = models.ForeignKey(
+        'users.ProfilLivreur',
+        on_delete=models.CASCADE,
+        related_name='payouts',
+        verbose_name=_('livreur')
+    )
+    montant = models.DecimalField(
+        _('montant du versement (FCFA)'),
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    methode = models.CharField(
+        _('méthode de retrait'),
+        max_length=50,
+        default='WAVE'
+    )
+    statut = models.CharField(
+        _('statut du versement'),
+        max_length=30,
+        choices=CHOIX_STATUTS,
+        default=STATUT_EN_ATTENTE,
+        db_index=True
+    )
+    date_demande = models.DateTimeField(_('date de demande'), auto_now_add=True, db_index=True)
+    date_traitement = models.DateTimeField(_('date de traitement'), null=True, blank=True)
+    reference = models.CharField(_('référence du versement'), max_length=100, unique=True, blank=True)
+
+    class Meta:
+        verbose_name = _('Payout Livreur')
+        verbose_name_plural = _('Payouts Livreurs')
+        ordering = ['-date_demande']
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            date_str = datetime.date.today().strftime('%Y%m%d')
+            suffix = uuid.uuid4().hex[:6].upper()
+            self.reference = f"PO-{date_str}-{suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Payout {self.reference} - {self.livreur} - {self.montant} FCFA [{self.statut}]"
+

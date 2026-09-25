@@ -84,11 +84,17 @@ class DeliveryDomainTestCase(TestCase):
         facture = Facture.objects.get(commande=self.commande)
         self.assertTrue(facture.est_payee)
 
+        # Passage des sous-commandes à PRETE pour déclencher la création de livraison
+        for sc in self.commande.sous_commandes.all():
+            sc.statut = Commande.STATUT_PRETE
+            sc.save()
+            DeliveryService.synchroniser_statuts_apres_sous_commande(sc)
+
         # Livraison générée
         livraison = Livraison.objects.get(commande=self.commande)
         self.assertIsNotNone(livraison.token_qr)
         self.assertTrue(livraison.token_qr.startswith("AYYOU-DELIVERY-"))
-        self.assertEqual(len(livraison.code_validation), 6)
+        self.assertEqual(len(livraison.code_validation), 4)
         self.assertTrue(livraison.code_validation.isdigit())
 
     def test_mock_payment_failed_and_canceled(self):
@@ -132,11 +138,11 @@ class DeliveryDomainTestCase(TestCase):
         self.commande.refresh_from_db()
         self.assertEqual(self.commande.statut, Commande.STATUT_LIVREE)
 
-    def test_validation_by_6_digit_code_success(self):
+    def test_validation_by_4_digit_code_success(self):
         livraison = DeliveryService.creer_livraison(self.commande)
         self.assertFalse(livraison.est_validee)
 
-        # Validation par Code 6 Chiffres
+        # Validation par Code 4 Chiffres
         livraison_validee = DeliveryService.valider_par_code(self.commande.id, livraison.code_validation)
         self.assertTrue(livraison_validee.est_validee)
         self.assertEqual(livraison_validee.methode_validation, Livraison.METHODE_CODE_VALIDATION)

@@ -198,6 +198,7 @@ class PublicationFeedSerializer(serializers.ModelSerializer):
             'etablissement',
             'produit',
             'media_url',
+            'cloudinary_public_id',
             'type_media',
             'duree_video',
             'max_duree_secondes',

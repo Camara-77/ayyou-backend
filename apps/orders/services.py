@@ -9,6 +9,7 @@ from apps.orders.models import (
     Panier, PanierItem, Commande, SousCommande,
     LigneCommande, LigneCommandeVariante, LigneCommandeOption, AdresseLivraison
 )
+from apps.orders.delivery_pricing import calculer_frais_livraison
 
 
 class CartService:
@@ -75,8 +76,14 @@ class CartService:
                 raise ValidationError(_("Une ou plusieurs options sélectionnées sont invalides pour ce produit."))
             valid_options = list(options_qs)
 
-        # 5. Récupération du panier et création/mise à jour de l'item
+        # 5. Récupération du panier et validation mono-établissement AYYOU
         panier = CartService.get_or_create_active_cart(utilisateur)
+
+        first_existing_item = panier.items.select_related('produit__etablissement').first()
+        if first_existing_item and first_existing_item.produit.etablissement_id != produit.etablissement_id:
+            err = ValidationError(_("Votre panier contient déjà des produits d'un autre établissement."))
+            err.code = 'CART_DIFFERENT_ESTABLISHMENT'
+            raise err
 
         # Vérification si un article identique existe déjà dans le panier (même produit, variante et options identiques)
         existing_items = PanierItem.objects.filter(
@@ -238,8 +245,13 @@ class OrderService:
             etablissement = group['etablissement']
             group_items = group['items']
 
-            # Frais de livraison forfaitaire par établissement (ex: 1000 FCFA)
-            frais_livraison_etab = Decimal('1000.00')
+            # Calcul dynamique des frais de livraison (triangulation GPS + grille + majoration AYYOU 300 FCFA)
+            calc_livraison = calculer_frais_livraison(
+                etablissement,
+                latitude_client=float(latitude_livraison) if latitude_livraison is not None else None,
+                longitude_client=float(longitude_livraison) if longitude_livraison is not None else None
+            )
+            frais_livraison_etab = calc_livraison['frais_livraison_client']
 
             sous_commande = SousCommande.objects.create(
                 commande=commande,

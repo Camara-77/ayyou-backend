@@ -15,6 +15,7 @@ class Livraison(models.Model):
     STATUT_EN_ATTENTE = 'EN_ATTENTE'
     STATUT_AFFECTEE = 'AFFECTEE'
     STATUT_ACCEPTEE = 'ACCEPTEE'
+    STATUT_ARRIVE_RESTAURANT = 'ARRIVE_RESTAURANT'
     STATUT_EN_PREPARATION = 'EN_PREPARATION'
     STATUT_PRETE = 'PRETE'
     STATUT_EN_LIVRAISON = 'EN_LIVRAISON'
@@ -25,6 +26,7 @@ class Livraison(models.Model):
         (STATUT_EN_ATTENTE, _('En attente')),
         (STATUT_AFFECTEE, _('Affectée')),
         (STATUT_ACCEPTEE, _('Acceptée')),
+        (STATUT_ARRIVE_RESTAURANT, _('Arrivé au restaurant')),
         (STATUT_EN_PREPARATION, _('En préparation')),
         (STATUT_PRETE, _('Prête')),
         (STATUT_EN_LIVRAISON, _('En livraison')),
@@ -70,8 +72,8 @@ class Livraison(models.Model):
         db_index=True
     )
     code_validation = models.CharField(
-        _('code de validation (6 chiffres)'),
-        max_length=6,
+        _('code de validation (4 chiffres)'),
+        max_length=4,
         db_index=True
     )
     est_validee = models.BooleanField(_('est validée'), default=False)
@@ -83,6 +85,7 @@ class Livraison(models.Model):
         blank=True
     )
     date_validation = models.DateTimeField(_('date de validation'), null=True, blank=True)
+    date_attribution = models.DateTimeField(_("date d'attribution"), null=True, blank=True)
     created_at = models.DateTimeField(_('date de création'), auto_now_add=True)
     updated_at = models.DateTimeField(_('date de modification'), auto_now=True)
 
@@ -93,8 +96,8 @@ class Livraison(models.Model):
 
     def clean(self):
         super().clean()
-        if self.code_validation and (len(self.code_validation) != 6 or not self.code_validation.isdigit()):
-            raise ValidationError(_("Le code de validation doit comporter exactement 6 chiffres."))
+        if self.code_validation and (len(self.code_validation) != 4 or not self.code_validation.isdigit()):
+            raise ValidationError(_("Le code de validation doit comporter exactement 4 chiffres."))
 
     def save(self, *args, **kwargs):
         self.clean()

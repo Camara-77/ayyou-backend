@@ -381,3 +381,43 @@ class CatalogViewsTestCase(APITestCase):
             self.assertNotIn('password', content_str)
             self.assertNotIn('pbkdf2', content_str)
             self.assertNotIn('otp', content_str)
+
+    # ------------------------------------------------------------------
+    # CLOUDINARY FEED UPLOAD & DELETE (29 - 32)
+    # ------------------------------------------------------------------
+    def test_29_post_feed_video_success(self):
+        url = reverse('catalog:publication-feed-list')
+        self.client.force_authenticate(user=self.proprietaire)
+        response = self.client.post(url, {
+            'media_url': 'https://res.cloudinary.com/ayyou/video/upload/ayyou/feed/sample.mp4',
+            'duree_secondes': 120,
+            'cloudinary_public_id': 'ayyou/feed/sample'
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['cloudinary_public_id'], 'ayyou/feed/sample')
+        self.assertEqual(response.data['duree_video'], '2:00')
+
+    def test_30_post_feed_video_exceeds_180s_duration_rejected(self):
+        url = reverse('catalog:publication-feed-list')
+        self.client.force_authenticate(user=self.proprietaire)
+        response = self.client.post(url, {
+            'media_url': 'https://res.cloudinary.com/ayyou/video/upload/ayyou/feed/long.mp4',
+            'duree_secondes': 240  # 4 minutes (> 180s)
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("3 minutes (180 secondes)", str(response.data['detail']))
+
+    def test_31_delete_feed_publication_success(self):
+        url = reverse('catalog:publication-feed-detail', kwargs={'pk': self.publication.pk})
+        self.client.force_authenticate(user=self.proprietaire)
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(PublicationFeed.objects.filter(pk=self.publication.pk).exists())
+
+    def test_32_post_feed_without_establishment_forbidden(self):
+        url = reverse('catalog:publication-feed-list')
+        self.client.force_authenticate(user=self.user_client)
+        response = self.client.post(url, {
+            'media_url': 'https://res.cloudinary.com/ayyou/video/upload/ayyou/feed/sample.mp4'
+        })
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.utils.translation import gettext_lazy as _
 
 from apps.orders.models import Commande
-from apps.payments.models import Paiement, Facture
+from apps.payments.models import Paiement, Facture, Payout
 from apps.payments.services import PaymentService
 
 
@@ -65,3 +65,23 @@ class FactureSerializer(serializers.ModelSerializer):
             'date_emission', 'date_paiement'
         ]
         read_only_fields = ['id', 'numero_facture', 'date_emission']
+
+
+class PayoutSerializer(serializers.ModelSerializer):
+    livreur_nom = serializers.SerializerMethodField()
+    statut_nom = serializers.CharField(source='get_statut_display', read_only=True)
+
+    class Meta:
+        model = Payout
+        fields = [
+            'id', 'reference', 'livreur', 'livreur_nom',
+            'montant', 'methode', 'statut', 'statut_nom',
+            'date_demande', 'date_traitement'
+        ]
+        read_only_fields = ['id', 'reference', 'livreur', 'statut', 'date_demande', 'date_traitement']
+
+    def get_livreur_nom(self, obj):
+        if obj.livreur and obj.livreur.utilisateur:
+            return obj.livreur.utilisateur.get_full_name()
+        return "Livreur"
+

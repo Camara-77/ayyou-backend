@@ -51,8 +51,12 @@ class PanierItemListView(APIView):
                 option_ids=data.get('options', [])
             )
         except ValidationError as err:
+            code = getattr(err, 'code', 'BAD_REQUEST')
+            msg = err.message if hasattr(err, 'message') else str(err)
+            if "autre établissement" in msg:
+                code = 'CART_DIFFERENT_ESTABLISHMENT'
             return Response(
-                {'detail': err.message if hasattr(err, 'message') else str(err)},
+                {'code': code, 'detail': msg},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -241,3 +245,36 @@ class CommandeDetailView(APIView):
 
         serializer = CommandeSerializer(commande)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class EstimateDeliveryView(APIView):
+    """
+    POST /api/orders/estimate-delivery/ : Estime les frais de livraison pour un établissement et des coordonnées GPS.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from apps.catalog.models import Etablissement
+        from apps.orders.delivery_pricing import calculer_frais_livraison
+
+        etablissement_id = request.data.get('etablissement_id')
+        lat = request.data.get('latitude')
+        lng = request.data.get('longitude')
+
+        etablissement = None
+        if etablissement_id:
+            etablissement = Etablissement.objects.filter(id=etablissement_id).first()
+
+        res = calculer_frais_livraison(
+            etablissement,
+            latitude_client=float(lat) if lat is not None else None,
+            longitude_client=float(lng) if lng is not None else None
+        )
+
+        return Response({
+            'distance_km': res['distance_km'],
+            'frais_livreur_net': str(res['frais_livreur_net']),
+            'majoration_ayyou': str(res['majoration_ayyou']),
+            'frais_livraison_client': float(res['frais_livraison_client'])
+        }, status=status.HTTP_200_OK)
+

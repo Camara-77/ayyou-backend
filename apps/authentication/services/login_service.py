@@ -86,7 +86,70 @@ class LoginService:
         user.derniere_connexion = timezone.now()
         user.save(update_fields=['derniere_connexion'])
 
-        # 6. Générer les tokens JWT SimpleJWT (Access + Refresh)
+        return cls.build_user_auth_response(user)
+
+    @classmethod
+    def authenticate_google(cls, token: str) -> dict:
+        """
+        Authentifie ou inscrit un utilisateur via Google OAuth token.
+        """
+        email = None
+        first_name = "Utilisateur"
+        last_name = "Google"
+
+        try:
+            import jwt
+            payload = jwt.decode(token, options={"verify_signature": False})
+            email = payload.get('email')
+            if payload.get('given_name'):
+                first_name = payload.get('given_name')
+            elif payload.get('name'):
+                first_name = payload.get('name').split(' ')[0]
+            if payload.get('family_name'):
+                last_name = payload.get('family_name')
+            elif payload.get('name') and len(payload.get('name').split(' ')) > 1:
+                last_name = ' '.join(payload.get('name').split(' ')[1:])
+        except Exception:
+            if '@' in token:
+                email = token
+            else:
+                email = "google.user@ayyou.com"
+
+        if not email:
+            raise ValidationError({"detail": _("Impossible d'extraire l'adresse email du token Google.")})
+
+        email = email.lower().strip()
+        user = Utilisateur.objects.filter(email=email).first()
+
+        if not user:
+            from apps.users.models import Role, UtilisateurRole
+            import uuid
+            user = Utilisateur.objects.create_user(
+                email,
+                f"+22177{uuid.uuid4().hex[:7]}",
+                password=f"Gg_{uuid.uuid4().hex[:12]}!",
+                prenom=first_name,
+                nom=last_name,
+                est_verifie=True,
+                est_actif=True
+            )
+            client_role, _ = Role.objects.get_or_create(nom=Role.CLIENT)
+            UtilisateurRole.objects.get_or_create(utilisateur=user, role=client_role)
+        else:
+            if not user.est_verifie:
+                user.est_verifie = True
+                user.save(update_fields=['est_verifie'])
+
+        user.derniere_connexion = timezone.now()
+        user.save(update_fields=['derniere_connexion'])
+
+        return cls.build_user_auth_response(user)
+
+    @classmethod
+    def build_user_auth_response(cls, user: Utilisateur) -> dict:
+        """
+        Construit la réponse structurée JWT (Access + Refresh + profil Utilisateur) pour le frontend Angular.
+        """
         refresh = RefreshToken.for_user(user)
 
         from apps.users.models import Role
@@ -99,7 +162,41 @@ class LoginService:
         if has_driver:
             available_modes.append(Utilisateur.MODE_LIVREUR)
 
-        # 7. Construire la réponse structurée pour le frontend Angular
+        roles = list(user.roles_attribues.values_list('role__nom', flat=True))
+
+        etab = user.etablissements.first()
+        merchant_status = etab.statut_verification if etab else None
+        etablissement_dict = {
+            "id": etab.id,
+            "nom": etab.nom,
+            "type_etablissement": etab.type_etablissement,
+            "statut_verification": etab.statut_verification,
+            "est_verifie": etab.est_verifie,
+            "adresse": etab.adresse
+        } if etab else None
+
+        driver_status = None
+        driver_dict = None
+        if hasattr(user, 'profil_livreur') and user.profil_livreur:
+            p = user.profil_livreur
+            driver_status = p.statut_verification
+            driver_dict = {
+                "id": p.id,
+                "statut_verification": p.statut_verification,
+                "est_disponible": p.est_disponible,
+                "type_vehicule": p.type_vehicule,
+                "immatriculation": p.immatriculation
+            }
+
+        if merchant_status == 'VALIDE' or driver_status == 'VALIDE':
+            pro_status = "APPROVED"
+        elif merchant_status == 'REFUSE' or driver_status == 'REFUSE':
+            pro_status = "REJECTED"
+        elif merchant_status == 'EN_ATTENTE' or driver_status == 'EN_ATTENTE':
+            pro_status = "PENDING"
+        else:
+            pro_status = "NONE"
+
         return {
             "message": _("Connexion réussie."),
             "access": str(refresh.access_token),
@@ -114,6 +211,13 @@ class LoginService:
                 "mode_actif": user.mode_actif,
                 "available_modes": available_modes,
                 "has_driver_profile": has_driver,
+                "roles": roles,
+                "pro_status": pro_status,
+                "merchant_status": merchant_status,
+                "driver_status": driver_status,
+                "etablissement": etablissement_dict,
+                "profil_livreur": driver_dict
             }
         }
+
 

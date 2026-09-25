@@ -305,53 +305,26 @@ class CartAndOrderAPITestCase(APITestCase):
         response = self.client.post(self.checkout_url, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_14_checkout_valide_multi_etablissements(self):
-        """Passage de commande réussi avec panier multi-établissements (Restaurant A + Vendeur B)."""
+    def test_14_ajout_multi_etablissements_refuse(self):
+        """Ajout d'un produit d'un second établissement refusé (Règle AYYOU 1 seul établissement par panier)."""
         self.client.force_authenticate(user=self.client_user)
 
-        # Ajouter Produit 1 (Restaurant A)
-        self.client.post(self.cart_items_url, {
+        # 1. Ajouter Produit 1 (Restaurant A)
+        res1 = self.client.post(self.cart_items_url, {
             'produit': self.produit_1.id,
             'quantite': 1,
             'variante': self.variante_xl.id,
             'options': [self.option_xoogn.id]
         }, format='json')
+        self.assertEqual(res1.status_code, status.HTTP_201_CREATED)
 
-        # Ajouter Produit 2 (Vendor B)
-        self.client.post(self.cart_items_url, {
+        # 2. Essayer d'ajouter Produit 2 (Vendor B) -> Refusé HTTP 400
+        res2 = self.client.post(self.cart_items_url, {
             'produit': self.produit_2.id,
             'quantite': 2
         }, format='json')
-
-        checkout_payload = {
-            'adresse_livraison': 'Résidence les Palmiers, Fann, Dakar',
-            'latitude_livraison': '14.6920000',
-            'longitude_livraison': '-17.4450000',
-            'instructions_livraison': 'Sonner à l interphone L02',
-            'destinataire': {
-                'nom': 'Moussa Diop',
-                'telephone': '+221770000001'
-            }
-        }
-
-        response = self.client.post(self.checkout_url, checkout_payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-
-        # Vérifier la commande globale
-        cmd_data = response.data
-        self.assertTrue(cmd_data['numero_commande'].startswith('AYY-'))
-        self.assertEqual(len(cmd_data['sous_commandes']), 2)
-
-        # Sous-Total = (4500+1500+500=6500) + (1000*2=2000) = 8500
-        # Frais livraison = 1000 + 1000 = 2000
-        # Total = 10500
-        self.assertEqual(cmd_data['sous_total'], '8500.00')
-        self.assertEqual(cmd_data['frais_livraison'], '2000.00')
-        self.assertEqual(cmd_data['total'], '10500.00')
-
-        # Vérifier que le panier actif précédent a été désactivé
-        cart_res = self.client.get(self.cart_url)
-        self.assertEqual(cart_res.data['nombre_articles'], 0)
+        self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res2.data.get('code'), 'CART_DIFFERENT_ESTABLISHMENT')
 
     def test_15_historique_commandes_et_isolation(self):
         """Consultation de l'historique des commandes et étanchéité entre clients."""

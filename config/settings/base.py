@@ -19,7 +19,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-ayyou-dev-secret-key-chang
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 't')
 
-ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',') if host.strip()]
+ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost,testserver').split(',') if host.strip()] + ['testserver', '*']
 
 # Application definition
 INSTALLED_APPS = [
@@ -43,6 +43,10 @@ INSTALLED_APPS = [
     'apps.orders',
     'apps.payments',
     'apps.deliveries',
+    'apps.admin_panel',
+    'apps.pro_api',
+    'apps.notifications',
+    'apps.ai',
 ]
 
 # Custom User Model configuration
@@ -185,6 +189,55 @@ CORS_ALLOWED_ORIGINS = [
 OTP_EXPIRATION_MINUTES = int(os.getenv('OTP_EXPIRATION_MINUTES', '10'))
 OTP_MAX_ATTEMPTS = int(os.getenv('OTP_MAX_ATTEMPTS', '3'))
 DEFAULT_COUNTRY_CODE = os.getenv('DEFAULT_COUNTRY_CODE', 'SN')
+
+# Email Configuration (Transactional Emails)
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '25'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'False').lower() in ('true', '1', 't')
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False').lower() in ('true', '1', 't')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'AYYOU <no-reply@ayyou.com>')
+
+# Cloudinary Configuration (Feed Video Uploads)
+CLOUDINARY_CLOUD_NAME = os.getenv('CLOUDINARY_CLOUD_NAME', '')
+CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY', '')
+CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET', '')
+
+try:
+    import cloudinary
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True
+    )
+except ImportError:
+    pass
+
+# PayDunya Payment Gateway Configuration
+PAYDUNYA_MASTER_KEY = os.getenv('PAYDUNYA_MASTER_KEY', 'test_master_key')
+PAYDUNYA_PRIVATE_KEY = os.getenv('PAYDUNYA_PRIVATE_KEY', 'test_private_key')
+PAYDUNYA_PUBLIC_KEY = os.getenv('PAYDUNYA_PUBLIC_KEY', 'test_public_key')
+PAYDUNYA_TOKEN = os.getenv('PAYDUNYA_TOKEN', 'test_token')
+PAYDUNYA_MODE = os.getenv('PAYDUNYA_MODE', 'test').lower()  # 'test' or 'live'
+PAYDUNYA_RETURN_URL = os.getenv('PAYDUNYA_RETURN_URL', 'http://localhost:4200/checkout/confirm')
+PAYDUNYA_CANCEL_URL = os.getenv('PAYDUNYA_CANCEL_URL', 'http://localhost:4200/checkout/cancel')
+PAYDUNYA_IPN_URL = os.getenv('PAYDUNYA_IPN_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/ipn/')
+
+# PayTech Payment Gateway Configuration
+PAYTECH_API_KEY = os.getenv('PAYTECH_API_KEY', os.getenv('PAYTECH_CLE_API', ''))
+PAYTECH_API_SECRET = os.getenv('PAYTECH_API_SECRET', os.getenv('PAYTECH_CLÉ_SECRETE', os.getenv('PAYTECH_CLE_SECRET', '')))
+PAYTECH_ENV = os.getenv('PAYTECH_ENV', 'test').lower()
+PAYTECH_FEE_RATE = float(os.getenv('PAYTECH_FEE_RATE', '0.015'))
+PAYTECH_IPN_URL = os.getenv('PAYTECH_IPN_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/ipn/')
+
+PAYTECH_SUCCESS_URL = os.getenv('PAYTECH_SUCCESS_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/success/')
+PAYTECH_CANCEL_URL = os.getenv('PAYTECH_CANCEL_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/cancel/')
+
+
+
 
 # Logging Configuration (Protects against leaking sensitive data like passwords, tokens, OTP codes)
 LOGGING = {

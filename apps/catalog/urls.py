@@ -6,6 +6,7 @@ from .views import (
     ProduitListView,
     ProduitDetailView,
     PublicationFeedListView,
+    PublicationFeedDetailView,
     LikeProduitView,
     LikeProduitDetailView
 )
@@ -26,6 +27,7 @@ urlpatterns = [
 
     # Feed social
     path('feed/', PublicationFeedListView.as_view(), name='publication-feed-list'),
+    path('feed/<int:pk>/', PublicationFeedDetailView.as_view(), name='publication-feed-detail'),
 
     # Likes client
     path('likes/', LikeProduitView.as_view(), name='like-list-create-delete'),
