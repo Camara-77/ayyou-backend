@@ -101,7 +101,7 @@ class SuperAdminBackendTestCase(APITestCase):
         self.livraison = Livraison.objects.create(
             commande=self.commande,
             token_qr='TOKEN-TEST-QR-123456789',
-            code_validation='123456',
+            code_validation='1234',
             statut=Livraison.STATUT_EN_ATTENTE
         )
         self.paiement = Paiement.objects.create(
@@ -328,13 +328,12 @@ class SuperAdminBackendTestCase(APITestCase):
         self.assertEqual(self.profil_livreur.statut_verification, ProfilLivreur.STATUT_REFUSE)
         self.assertFalse(self.profil_livreur.est_disponible)
 
-    @patch('apps.notifications.n8n_service.N8nNotificationService.send_pro_rejection_for_etablissement')
-    def test_business_rejection_triggers_n8n_event(self, mock_n8n_rejection):
+    @patch('apps.notifications.email_service.EmailNotificationService.send_pro_rejection_email_for_etablissement')
+    def test_business_rejection_triggers_n8n_event(self, mock_email_rejection):
         self.client.force_authenticate(user=self.superadmin)
         url = reverse('admin_panel:business-reject', kwargs={'pk': self.restaurant.pk})
         motif_text = "NINEA expiré et invalide"
-        with self.captureOnCommitCallbacks(execute=True):
-            response = self.client.patch(url, {'motif': motif_text}, format='json')
+        response = self.client.patch(url, {'motif': motif_text}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         self.restaurant.refresh_from_db()
@@ -345,15 +344,14 @@ class SuperAdminBackendTestCase(APITestCase):
         self.assertIsNotNone(audit_log)
         self.assertEqual(audit_log.details.get('motif'), motif_text)
 
-        mock_n8n_rejection.assert_called_once_with(self.restaurant, motif_text)
+        mock_email_rejection.assert_called_once_with(self.restaurant, motif_text)
 
-    @patch('apps.notifications.n8n_service.N8nNotificationService.send_pro_rejection_for_driver')
-    def test_driver_rejection_triggers_n8n_event(self, mock_n8n_rejection):
+    @patch('apps.notifications.email_service.EmailNotificationService.send_pro_rejection_email_for_driver')
+    def test_driver_rejection_triggers_n8n_event(self, mock_email_rejection):
         self.client.force_authenticate(user=self.superadmin)
         url = reverse('admin_panel:driver-reject', kwargs={'pk': self.profil_livreur.pk})
         motif_text = "Casier judiciaire non vierge"
-        with self.captureOnCommitCallbacks(execute=True):
-            response = self.client.patch(url, {'motif': motif_text}, format='json')
+        response = self.client.patch(url, {'motif': motif_text}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         self.profil_livreur.refresh_from_db()
@@ -364,7 +362,7 @@ class SuperAdminBackendTestCase(APITestCase):
         self.assertIsNotNone(audit_log)
         self.assertEqual(audit_log.details.get('motif'), motif_text)
 
-        mock_n8n_rejection.assert_called_once_with(self.profil_livreur, motif_text)
+        mock_email_rejection.assert_called_once_with(self.profil_livreur, motif_text)
 
     def test_rejection_endpoints_security(self):
         # 1. Unauthenticated request

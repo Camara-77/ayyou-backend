@@ -26,9 +26,11 @@ from apps.admin_panel.serializers import (
 )
 from apps.admin_panel.services import AdminDashboardService, AdminAuditService
 from apps.notifications.n8n_service import N8nNotificationService
+from apps.notifications.email_service import EmailNotificationService
 
 
 class AdminDashboardView(APIView):
+    """Fournit les indicateurs principaux du tableau de bord administratif."""
     permission_classes = [IsSuperAdmin]
 
     def get(self, request):
@@ -37,6 +39,7 @@ class AdminDashboardView(APIView):
 
 
 class AdminPendingActionsView(APIView):
+    """Expose les tâches administratives qui nécessitent une intervention."""
     permission_classes = [IsSuperAdmin]
 
     def get(self, request):
@@ -45,11 +48,13 @@ class AdminPendingActionsView(APIView):
 
 
 class AdminUserViewSet(viewsets.ModelViewSet):
+    """Gère les comptes utilisateurs et leurs rôles côté administration."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminUserSerializer
     queryset = Utilisateur.objects.all().order_by('-date_creation')
 
     def get_queryset(self):
+        # Filtre la liste par texte, statut actif ou rôle attribué.
         qs = super().get_queryset()
         search = self.request.query_params.get('search')
         est_actif = self.request.query_params.get('est_actif')
@@ -71,6 +76,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path='toggle-status')
     def toggle_status(self, request, pk=None):
+        """Inverse l'état actif du compte et journalise le changement."""
         user = self.get_object()
         user.est_actif = not user.est_actif
         user.save(update_fields=['est_actif'])
@@ -88,6 +94,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='assign-role')
     @transaction.atomic
     def assign_role(self, request, pk=None):
+        """Crée le rôle si nécessaire puis l'associe à l'utilisateur."""
         user = self.get_object()
         role_nom = request.data.get('role')
         if not role_nom:
@@ -109,11 +116,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
 
 class AdminBusinessViewSet(viewsets.ModelViewSet):
+    """Gère les établissements et leurs demandes de vérification."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminBusinessSerializer
     queryset = Etablissement.objects.all().order_by('-date_creation')
 
     def get_queryset(self):
+        # Combine les filtres de recherche, de type et de statut de vérification.
         qs = super().get_queryset()
         search = self.request.query_params.get('search')
         type_etab = self.request.query_params.get('type_etablissement')
@@ -134,6 +143,7 @@ class AdminBusinessViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], url_path='approve')
     @transaction.atomic
     def approve(self, request, pk=None):
+        """Valide l'établissement et ses documents en attente, puis envoie un courriel."""
         etablissement = self.get_object()
         ancien_statut = etablissement.statut_verification
 
@@ -154,18 +164,18 @@ class AdminBusinessViewSet(viewsets.ModelViewSet):
             details={'nom': etablissement.nom, 'type': etablissement.type_etablissement}
         )
 
-        # Déclenchement n8n uniquement lors de la transition vers VALIDE
+        # Déclenchement de l'email de validation Django (EmailService direct via SMTP)
         if ancien_statut != Etablissement.STATUT_VALIDE:
-            transaction.on_commit(
-                lambda: N8nNotificationService.send_pro_approval_for_etablissement(etablissement)
-            )
+            EmailNotificationService.send_pro_approval_email_for_etablissement(etablissement)
 
         return Response(AdminBusinessSerializer(etablissement).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['patch'], url_path='reject')
     @transaction.atomic
     def reject(self, request, pk=None):
+        """Refuse l'établissement et ses documents en attente, avec un motif éventuel."""
         etablissement = self.get_object()
+        ancien_statut = etablissement.statut_verification
         etablissement.statut_verification = Etablissement.STATUT_REFUSE
         etablissement.est_verifie = False
         etablissement.save(update_fields=['statut_verification', 'est_verifie'])
@@ -185,19 +195,20 @@ class AdminBusinessViewSet(viewsets.ModelViewSet):
             details={'nom': etablissement.nom, 'motif': motif}
         )
 
-        transaction.on_commit(
-            lambda: N8nNotificationService.send_pro_rejection_for_etablissement(etablissement, motif)
-        )
+        if ancien_statut != Etablissement.STATUT_REFUSE:
+            EmailNotificationService.send_pro_rejection_email_for_etablissement(etablissement, motif)
 
         return Response(AdminBusinessSerializer(etablissement).data, status=status.HTTP_200_OK)
 
 
 class AdminDriverViewSet(viewsets.ModelViewSet):
+    """Gère les profils livreur, leur vérification et leur disponibilité."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminDriverSerializer
     queryset = ProfilLivreur.objects.all().order_by('-date_creation')
 
     def get_queryset(self):
+        # Filtre les profils par identité, statut de vérification ou type de véhicule.
         qs = super().get_queryset()
         search = self.request.query_params.get('search')
         statut_verif = self.request.query_params.get('statut_verification')
@@ -219,6 +230,7 @@ class AdminDriverViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], url_path='approve')
     @transaction.atomic
     def approve(self, request, pk=None):
+        """Valide le profil et les documents en attente du livreur."""
         driver = self.get_object()
         ancien_statut = driver.statut_verification
 
@@ -239,18 +251,18 @@ class AdminDriverViewSet(viewsets.ModelViewSet):
             details={'driver_name': driver.utilisateur.get_full_name()}
         )
 
-        # Déclenchement n8n uniquement lors de la transition vers VALIDE
+        # Déclenchement de l'email de validation Django (EmailService direct via SMTP)
         if ancien_statut != ProfilLivreur.STATUT_VALIDE:
-            transaction.on_commit(
-                lambda: N8nNotificationService.send_pro_approval_for_driver(driver)
-            )
+            EmailNotificationService.send_pro_approval_email_for_driver(driver)
 
         return Response(AdminDriverSerializer(driver).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['patch'], url_path='reject')
     @transaction.atomic
     def reject(self, request, pk=None):
+        """Refuse le profil, désactive sa disponibilité et conserve le motif."""
         driver = self.get_object()
+        ancien_statut = driver.statut_verification
         motif = request.data.get('motif', 'Dossier non conforme')
         driver.statut_verification = ProfilLivreur.STATUT_REFUSE
         driver.est_disponible = False
@@ -269,19 +281,20 @@ class AdminDriverViewSet(viewsets.ModelViewSet):
             details={'driver_name': driver.utilisateur.get_full_name(), 'motif': motif}
         )
 
-        transaction.on_commit(
-            lambda: N8nNotificationService.send_pro_rejection_for_driver(driver, motif)
-        )
+        if ancien_statut != ProfilLivreur.STATUT_REFUSE:
+            EmailNotificationService.send_pro_rejection_email_for_driver(driver, motif)
 
         return Response(AdminDriverSerializer(driver).data, status=status.HTTP_200_OK)
 
 
 class AdminOrderViewSet(viewsets.ReadOnlyModelViewSet):
+    """Permet de consulter les commandes et d'effectuer des actions administratives."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminOrderSerializer
     queryset = Commande.objects.all().order_by('-date_creation')
 
     def get_queryset(self):
+        # Recherche par numéro ou destinataire et filtre par statut.
         qs = super().get_queryset()
         search = self.request.query_params.get('search')
         statut_cmd = self.request.query_params.get('statut')
@@ -298,6 +311,7 @@ class AdminOrderViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path='status')
     def update_order_status(self, request, pk=None):
+        """Met à jour le statut de la commande et consigne la transition."""
         commande = self.get_object()
         nouveau_statut = request.data.get('statut')
         if not nouveau_statut:
@@ -319,6 +333,7 @@ class AdminOrderViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'], url_path='assign-driver')
     @transaction.atomic
     def assign_driver(self, request, pk=None):
+        """Affecte à la livraison un livreur dont le profil a été validé."""
         commande = self.get_object()
         driver_id = request.data.get('driver_id')
         if not driver_id:
@@ -346,11 +361,13 @@ class AdminOrderViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class AdminDeliveryViewSet(viewsets.ReadOnlyModelViewSet):
+    """Expose les livraisons et les outils de suivi des incidents."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminDeliverySerializer
     queryset = Livraison.objects.all().order_by('-created_at')
 
     def get_queryset(self):
+        # Restreint la liste au statut demandé, le cas échéant.
         qs = super().get_queryset()
         statut_livr = self.request.query_params.get('statut')
         if statut_livr:
@@ -359,6 +376,7 @@ class AdminDeliveryViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='close-incident')
     def close_incident(self, request, pk=None):
+        """Consigne dans l'audit la résolution déclarée de l'incident."""
         livraison = self.get_object()
         resolution = request.data.get('resolution', 'Incident résolu par le Super Admin')
 
@@ -373,6 +391,7 @@ class AdminDeliveryViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class AdminCategoryViewSet(viewsets.ModelViewSet):
+    """Gère les catégories du catalogue et leur ordre d'affichage."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminCategorySerializer
     queryset = Categorie.objects.all().order_by('ordre', 'nom')
@@ -380,6 +399,7 @@ class AdminCategoryViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='reorder')
     @transaction.atomic
     def reorder(self, request):
+        """Applique les positions reçues pour réordonner les catégories."""
         orders = request.data.get('orders', [])
         if not isinstance(orders, list):
             return Response({'error': 'orders doit être une liste.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -400,11 +420,13 @@ class AdminCategoryViewSet(viewsets.ModelViewSet):
 
 
 class AdminCatalogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Consulte les produits et permet leur modération administrative."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminCatalogProductSerializer
     queryset = Produit.objects.all().order_by('-date_creation')
 
     def get_queryset(self):
+        # Filtre les produits par recherche textuelle, établissement ou catégorie.
         qs = super().get_queryset()
         search = self.request.query_params.get('search')
         etablissement_id = self.request.query_params.get('etablissement')
@@ -420,6 +442,7 @@ class AdminCatalogViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path='moderate')
     def moderate(self, request, pk=None):
+        """Modifie la disponibilité et/ou le stock réservé du produit."""
         produit = self.get_object()
         est_disponible = request.data.get('est_disponible')
         stock_ayyou_reserve = request.data.get('stock_ayyou_reserve')
@@ -449,11 +472,13 @@ class AdminCatalogViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class AdminPaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    """Consulte les paiements et permet leur rapprochement manuel."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AdminPaymentSerializer
     queryset = Paiement.objects.all().order_by('-date_creation')
 
     def get_queryset(self):
+        # Filtre les paiements selon leur statut et leur méthode.
         qs = super().get_queryset()
         statut_pay = self.request.query_params.get('statut')
         methode = self.request.query_params.get('methode')
@@ -467,6 +492,7 @@ class AdminPaymentViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'], url_path='reconcile')
     @transaction.atomic
     def reconcile(self, request, pk=None):
+        """Marque le paiement comme rapproché et journalise la note fournie."""
         paiement = self.get_object()
         note = request.data.get('note', 'Rapprochement manuel effectué par le Super Admin')
 
@@ -486,11 +512,13 @@ class AdminPaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class AdminAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Expose les journaux d'audit avec recherche et filtres."""
     permission_classes = [IsSuperAdmin]
     serializer_class = AuditLogSerializer
     queryset = AuditLog.objects.all().order_by('-timestamp')
 
     def get_queryset(self):
+        # Recherche dans les informations du journal ou filtre par action/ressource.
         qs = super().get_queryset()
         search = self.request.query_params.get('search')
         action_param = self.request.query_params.get('action')

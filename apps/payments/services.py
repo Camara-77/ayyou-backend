@@ -192,3 +192,159 @@ class PaymentService:
             }
         )
         return facture
+
+    @staticmethod
+    def ajouter_un_mois_calendaire(dt):
+        import calendar
+        month = dt.month % 12 + 1
+        year = dt.year + (dt.month // 12)
+        day = min(dt.day, calendar.monthrange(year, month)[1])
+        return dt.replace(year=year, month=month, day=day)
+
+    @staticmethod
+    @transaction.atomic
+    def initier_paiement_abonnement(etablissement, methode: str = Paiement.METHODE_WAVE) -> Paiement:
+
+        """
+        Initialise une transaction de paiement d'abonnement PRO pour un établissement.
+        Le montant est STRICTEMENT imposé à 10 000.00 FCFA côté serveur.
+        """
+        from apps.catalog.models import Etablissement
+        import uuid
+
+        if etablissement.type_etablissement not in [Etablissement.TYPE_RESTAURANT, Etablissement.TYPE_VENDEUR]:
+            raise ValidationError(_("Seuls les Restaurants et Vendeurs peuvent souscrire un abonnement PRO."))
+
+        valid_methodes = [m[0] for m in Paiement.CHOIX_METHODES]
+        if methode not in valid_methodes:
+            raise ValidationError(_("La méthode de paiement sélectionnée est invalide."))
+
+        montant_fixe = Decimal('10000.00')
+
+        # Récupérer un paiement en attente existant ou en créer un nouveau
+        paiement_existant = Paiement.objects.filter(
+            etablissement=etablissement,
+            type_paiement=Paiement.TYPE_ABONNEMENT_PRO,
+            statut__in=[Paiement.STATUT_EN_ATTENTE, Paiement.STATUT_INITIE]
+        ).first()
+
+        if paiement_existant:
+            paiement_existant.methode = methode
+            paiement_existant.statut = Paiement.STATUT_INITIE
+            paiement_existant.montant = montant_fixe
+            paiement_existant.save(update_fields=['methode', 'statut', 'montant'])
+            return paiement_existant
+
+        date_str = timezone.now().strftime('%Y%m%d')
+        suffix = uuid.uuid4().hex[:6].upper()
+        ref = f"SUB-PAY-{date_str}-{suffix}"
+
+        paiement = Paiement.objects.create(
+            etablissement=etablissement,
+            type_paiement=Paiement.TYPE_ABONNEMENT_PRO,
+            reference=ref,
+            montant=montant_fixe,
+            methode=methode,
+            statut=Paiement.STATUT_INITIE
+        )
+        return paiement
+
+    @staticmethod
+    @transaction.atomic
+    def confirmer_paiement_abonnement(paiement: Paiement, transaction_externe: str = None) -> Paiement:
+        """
+        Confirme le paiement d'un abonnement PRO de manière atomique :
+        1. Garantit l'idempotence (si déjà PAYE, retourne le paiement).
+        2. Calcule les dates (1 mois calendaire) :
+           - SI actif (expiration > now) : nouvelle_expiration = date_expiration_actuelle + 1 mois
+           - SI expiré / inactif : nouvelle_debut = now, nouvelle_expiration = now + 1 mois
+        3. Met à jour l'Etablissement (statut_abonnement = ACTIF, dates d'abonnement).
+        4. Crée AbonnementPro et FactureAbonnement.
+        5. Déclenche l'email d'activation/renouvellement.
+        """
+        from apps.catalog.models import Etablissement
+        from apps.payments.models import AbonnementPro, FactureAbonnement
+        from apps.notifications.email_service import EmailNotificationService
+
+        if paiement.statut == Paiement.STATUT_PAYE:
+            return paiement
+
+        if paiement.type_paiement != Paiement.TYPE_ABONNEMENT_PRO or not paiement.etablissement:
+            raise ValidationError(_("Ce paiement n'est pas un paiement d'abonnement PRO valide."))
+
+        now = timezone.now()
+        etablissement = paiement.etablissement
+
+        # Déterminer la nouvelle plage de dates d'abonnement (1 mois calendaire)
+        if etablissement.statut_abonnement == Etablissement.STATUT_ABONNEMENT_ACTIF and etablissement.date_expiration_abonnement and etablissement.date_expiration_abonnement > now:
+            nouvelle_debut = etablissement.date_debut_abonnement or now
+            nouvelle_expiration = PaymentService.ajouter_un_mois_calendaire(etablissement.date_expiration_abonnement)
+        else:
+            nouvelle_debut = now
+            nouvelle_expiration = PaymentService.ajouter_un_mois_calendaire(now)
+
+        paiement.statut = Paiement.STATUT_PAYE
+        paiement.date_paiement = now
+        if transaction_externe:
+            paiement.transaction_externe = transaction_externe
+        paiement.save(update_fields=['statut', 'date_paiement', 'transaction_externe'])
+
+        # Mise à jour de l'Établissement
+        etablissement.statut_abonnement = Etablissement.STATUT_ABONNEMENT_ACTIF
+        etablissement.date_debut_abonnement = nouvelle_debut
+        etablissement.date_expiration_abonnement = nouvelle_expiration
+        etablissement.save(update_fields=['statut_abonnement', 'date_debut_abonnement', 'date_expiration_abonnement'])
+
+        # Création ou récupération de l'AbonnementPro (Idempotence)
+        abonnement_pro, created = AbonnementPro.objects.get_or_create(
+            paiement=paiement,
+            defaults={
+                'etablissement': etablissement,
+                'montant': paiement.montant,
+                'date_debut': nouvelle_debut,
+                'date_expiration': nouvelle_expiration,
+                'statut': AbonnementPro.STATUT_PAYE
+            }
+        )
+
+        # Création de la FactureAbonnement PRO
+        if created or not hasattr(abonnement_pro, 'facture'):
+            proprietaire = etablissement.proprietaire
+            FactureAbonnement.objects.create(
+                abonnement=abonnement_pro,
+                etablissement=etablissement,
+                nom_etablissement_snapshot=etablissement.nom,
+                type_etablissement_snapshot=etablissement.get_type_etablissement_display(),
+                nom_proprietaire_snapshot=proprietaire.get_full_name() if proprietaire else "Partenaire AYYOU",
+                email_proprietaire_snapshot=proprietaire.email if proprietaire else "",
+                montant_ht=paiement.montant,
+                montant_total=paiement.montant
+            )
+
+        # Déclencher l'email de confirmation d'abonnement
+        EmailNotificationService.send_subscription_confirmation_email(abonnement_pro)
+
+        # Déclencher la notification In-App d'activation/réactivation d'abonnement
+        if proprietaire:
+            from apps.notifications.models import Notification
+            date_exp_str = nouvelle_expiration.strftime('%d/%m/%Y à %H:%M')
+            Notification.objects.create(
+                utilisateur=proprietaire,
+                type_notification=Notification.TYPE_SUBSCRIPTION,
+                canal=Notification.CANAL_IN_APP,
+                titre=f"Abonnement PRO activé — {etablissement.nom}",
+                message=f"Votre abonnement PRO AYYOU est désormais ACTIF jusqu'au {date_exp_str}. Votre établissement, vos produits et vos vidéos sont de nouveau visibles du public.",
+                statut=Notification.STATUT_ENVOYEE,
+                reference_type='AbonnementPro',
+                reference_id=str(abonnement_pro.id),
+                metadata={
+                    'event': 'PRO_SUBSCRIPTION_CONFIRMED',
+                    'etablissement_id': etablissement.id,
+                    'etablissement_nom': etablissement.nom,
+                    'date_expiration': date_exp_str
+                }
+            )
+
+        return paiement
+
+

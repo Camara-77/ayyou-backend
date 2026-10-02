@@ -126,7 +126,7 @@ class ProfilClient(models.Model):
         related_name='profil_client',
         verbose_name=_('utilisateur')
     )
-    photo_avatar = models.URLField(_('photo d\'avatar'), max_length=500, blank=True, null=True)
+    photo_avatar = models.TextField(_('photo d\'avatar'), blank=True, null=True)
     adresse_principale = models.CharField(_('adresse principale'), max_length=255, blank=True, default='')
     latitude = models.DecimalField(_('latitude'), max_digits=10, decimal_places=7, null=True, blank=True)
     longitude = models.DecimalField(_('longitude'), max_digits=10, decimal_places=7, null=True, blank=True)

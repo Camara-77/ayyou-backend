@@ -86,6 +86,8 @@ class Livraison(models.Model):
     )
     date_validation = models.DateTimeField(_('date de validation'), null=True, blank=True)
     date_attribution = models.DateTimeField(_("date d'attribution"), null=True, blank=True)
+    phase_attribution = models.IntegerField(_("phase d'attribution"), default=1)
+    propositions_livreurs = models.JSONField(_("propositions livreurs"), default=dict, blank=True)
     created_at = models.DateTimeField(_('date de création'), auto_now_add=True)
     updated_at = models.DateTimeField(_('date de modification'), auto_now=True)
 

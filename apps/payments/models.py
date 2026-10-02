@@ -47,12 +47,37 @@ class Paiement(models.Model):
         (STATUT_ANNULE, _('Annulé')),
     ]
 
+    TYPE_COMMANDE_CLIENT = 'COMMANDE_CLIENT'
+    TYPE_ABONNEMENT_PRO = 'ABONNEMENT_PRO'
+
+    CHOIX_TYPES_PAIEMENT = [
+        (TYPE_COMMANDE_CLIENT, _('Commande Client')),
+        (TYPE_ABONNEMENT_PRO, _('Abonnement PRO')),
+    ]
+
     id = models.BigAutoField(primary_key=True)
     commande = models.ForeignKey(
         Commande,
         on_delete=models.CASCADE,
         related_name='paiements',
-        verbose_name=_('commande')
+        verbose_name=_('commande'),
+        null=True,
+        blank=True
+    )
+    etablissement = models.ForeignKey(
+        'catalog.Etablissement',
+        on_delete=models.CASCADE,
+        related_name='paiements_abonnement',
+        verbose_name=_('établissement'),
+        null=True,
+        blank=True
+    )
+    type_paiement = models.CharField(
+        _('type de paiement'),
+        max_length=30,
+        choices=CHOIX_TYPES_PAIEMENT,
+        default=TYPE_COMMANDE_CLIENT,
+        db_index=True
     )
     reference = models.CharField(
         _('référence interne AYYOU'),
@@ -286,4 +311,96 @@ class Payout(models.Model):
 
     def __str__(self):
         return f"Payout {self.reference} - {self.livreur} - {self.montant} FCFA [{self.statut}]"
+
+
+class AbonnementPro(models.Model):
+    """
+    Enregistre chaque cycle d'abonnement PRO souscrit ou renouvelé par un Restaurant ou Vendeur (10 000 FCFA / mois).
+    """
+    STATUT_PAYE = 'PAYE'
+    STATUT_EXPIRE = 'EXPIRE'
+    STATUT_ANNULE = 'ANNULE'
+
+    CHOIX_STATUTS = [
+        (STATUT_PAYE, _('Payé / Actif')),
+        (STATUT_EXPIRE, _('Expiré')),
+        (STATUT_ANNULE, _('Annulé')),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    etablissement = models.ForeignKey(
+        'catalog.Etablissement',
+        on_delete=models.CASCADE,
+        related_name='abonnements_pro',
+        verbose_name=_('établissement')
+    )
+    paiement = models.OneToOneField(
+        Paiement,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='abonnement_pro',
+        verbose_name=_('paiement associé')
+    )
+    montant = models.DecimalField(
+        _('montant de l\'abonnement (FCFA)'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('10000.00')
+    )
+    date_debut = models.DateTimeField(_('date de début'))
+    date_expiration = models.DateTimeField(_('date d\'expiration'), db_index=True)
+    statut = models.CharField(_('statut'), max_length=20, choices=CHOIX_STATUTS, default=STATUT_PAYE, db_index=True)
+    created_at = models.DateTimeField(_('date de création'), auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('Abonnement PRO')
+        verbose_name_plural = _('Abonnements PRO')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Abonnement PRO #{self.id} - {self.etablissement.nom} (Jusqu'au {self.date_expiration.strftime('%d/%m/%Y')})"
+
+
+class FactureAbonnement(models.Model):
+    """
+    Facture comptable officielle émise pour un paiement d'abonnement PRO partenaire.
+    """
+    id = models.BigAutoField(primary_key=True)
+    numero_facture = models.CharField(_('numéro de facture'), max_length=100, unique=True, db_index=True)
+    abonnement = models.OneToOneField(
+        AbonnementPro,
+        on_delete=models.CASCADE,
+        related_name='facture',
+        verbose_name=_('abonnement associé')
+    )
+    etablissement = models.ForeignKey(
+        'catalog.Etablissement',
+        on_delete=models.CASCADE,
+        related_name='factures_abonnement',
+        verbose_name=_('établissement')
+    )
+    nom_etablissement_snapshot = models.CharField(_('nom établissement (snapshot)'), max_length=255)
+    type_etablissement_snapshot = models.CharField(_('type établissement (snapshot)'), max_length=50)
+    nom_proprietaire_snapshot = models.CharField(_('nom propriétaire (snapshot)'), max_length=255)
+    email_proprietaire_snapshot = models.CharField(_('email propriétaire (snapshot)'), max_length=255)
+    montant_ht = models.DecimalField(_('montant HT'), max_digits=10, decimal_places=2, default=Decimal('10000.00'))
+    montant_total = models.DecimalField(_('montant total (FCFA)'), max_digits=10, decimal_places=2, default=Decimal('10000.00'))
+    date_emission = models.DateTimeField(_('date d\'émission'), auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('Facture Abonnement PRO')
+        verbose_name_plural = _('Factures Abonnements PRO')
+        ordering = ['-date_emission']
+
+    def save(self, *args, **kwargs):
+        if not self.numero_facture:
+            date_str = datetime.date.today().strftime('%Y%m')
+            suffix = uuid.uuid4().hex[:6].upper()
+            self.numero_facture = f"FAC-PRO-{date_str}-{suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Facture PRO {self.numero_facture} - {self.nom_etablissement_snapshot} (10 000 FCFA)"
+
 

@@ -8,17 +8,28 @@ from .services import RegistrationService, OtpService, LoginService
 
 class RegisterView(APIView):
     """
-    API d'inscription Client AYYOU.
-    POST /api/auth/register/
+    API REST d'inscription des nouveaux clients AYYOU.
+    Endpoint : POST /api/auth/register/
+    Accès : Public (AllowAny). Aucun token JWT requis.
     """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
+        """
+        Reçoit et traite le formulaire JSON d'inscription Client.
+        - Valide les types, la complexité du mot de passe et l'unicité via RegisterSerializer.
+        - En cas d'erreur d'unicité (email/téléphone déjà utilisé), renvoie HTTP 409 CONFLICT.
+        - En cas d'erreur de syntaxe ou mot de passe faible, renvoie HTTP 400 BAD REQUEST.
+        - En cas de succès, déclenche le service transactionnel atomique et renvoie HTTP 201 CREATED.
+        """
+        # Step 1 : Instanciation du serializer avec les données JSON transmises par Angular
         serializer = RegisterSerializer(data=request.data)
 
+        # Step 2 : Validation des règles métier et vérification de la validité des champs
         if not serializer.is_valid():
             errors = serializer.errors
-            # Vérifier si l'erreur concerne un conflit d'unicité (email ou téléphone) pour le code HTTP 409
+
+            # Analyser si l'échec de validation est dû à une tentative de doublon d'email ou de téléphone
             is_conflict = False
             for field in ['email', 'numero_telephone']:
                 if field in errors:
@@ -27,12 +38,14 @@ class RegisterView(APIView):
                             is_conflict = True
                             break
 
+            # Utiliser HTTP 409 Conflict pour les doublons et HTTP 400 Bad Request pour les erreurs de format
             status_code = status.HTTP_409_CONFLICT if is_conflict else status.HTTP_400_BAD_REQUEST
             return Response({'errors': errors}, status=status_code)
 
-        # Déclencher le service d'inscription atomique
+        # Step 3 : Exécution du service métier transactionnel (Utilisateur + ProfilClient + Role CLIENT + OTP SMS)
         user = RegistrationService.register_client(serializer.validated_data)
 
+        # Step 4 : Retour de la réponse HTTP 201 Created indiquant la nécessité de vérifier l'OTP SMS
         return Response(
             {
                 "message": "Inscription réussie. Un code de vérification a été envoyé par SMS.",

@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import Optional
 from django.conf import settings
@@ -6,6 +7,8 @@ from django.template.loader import render_to_string
 from django.db import transaction
 
 from .models import Notification
+from apps.catalog.models import Etablissement
+from apps.users.models import ProfilLivreur
 
 logger = logging.getLogger('apps.notifications')
 
@@ -95,3 +98,327 @@ class EmailNotificationService:
             transaction.on_commit(lambda: cls.envoyer_email_notification(notification))
         else:
             cls.envoyer_email_notification(notification)
+
+    @classmethod
+    def send_pro_approval_email_for_etablissement(cls, etablissement: Etablissement) -> Optional[Notification]:
+        """
+        Génère et déclenche l'email de validation de compte pour un Restaurant ou Vendeur à domicile.
+        """
+        proprietaire = etablissement.proprietaire
+        if not proprietaire:
+            logger.warning(f"[EMAIL SERVICE] Impossible d'envoyer l'email d'approbation : Etablissement #{etablissement.id} sans propriétaire.")
+            return None
+
+        frontend_base = os.getenv('FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        if etablissement.type_etablissement == Etablissement.TYPE_VENDEUR:
+            type_label = "Vendeur à domicile"
+            login_url = f"{frontend_base}/vendeur/login"
+        else:
+            type_label = "Restaurant"
+            login_url = f"{frontend_base}/pro/login"
+
+        titre = f"Félicitations ! Votre compte {type_label} AYYOU a été validé"
+        message = (
+            f"Bonjour {etablissement.nom},\n\n"
+            f"Nous avons le plaisir de vous informer que votre compte {type_label} « {etablissement.nom} » "
+            f"a été vérifié et validé avec succès par l'équipe AYYOU.\n\n"
+            f"Vous pouvez dès à présent vous connecter à votre espace professionnel pour gérer vos produits, "
+            f"vos commandes et votre établissement :\n"
+            f"{login_url}\n\n"
+            f"Merci de votre confiance et bienvenue dans le réseau AYYOU !"
+        )
+
+        notification = Notification.objects.create(
+            utilisateur=proprietaire,
+            type_notification=Notification.TYPE_PRO_VALIDATION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='Etablissement',
+            reference_id=str(etablissement.id),
+            metadata={
+                'event': 'PRO_ACCOUNT_APPROVED',
+                'type': etablissement.type_etablissement,
+                'name': etablissement.nom,
+                'login_url': login_url
+            }
+        )
+        cls.dispatch_email_on_commit(notification)
+        from apps.notifications.n8n_service import N8nNotificationService
+        N8nNotificationService.send_pro_approval_for_etablissement(etablissement)
+        return notification
+
+    @classmethod
+    def send_pro_rejection_email_for_etablissement(cls, etablissement: Etablissement, motif: str) -> Optional[Notification]:
+        """
+        Génère et déclenche l'email de refus de compte pour un Restaurant ou Vendeur à domicile.
+        """
+        proprietaire = etablissement.proprietaire
+        if not proprietaire:
+            logger.warning(f"[EMAIL SERVICE] Impossible d'envoyer l'email de refus : Etablissement #{etablissement.id} sans propriétaire.")
+            return None
+
+        type_label = "Vendeur à domicile" if etablissement.type_etablissement == Etablissement.TYPE_VENDEUR else "Restaurant"
+        motif_clean = (motif or 'Dossier non conforme').strip()
+
+        titre = f"Information concernant votre demande de compte {type_label} AYYOU"
+        message = (
+            f"Bonjour {etablissement.nom},\n\n"
+            f"Nous avons examiné la demande d'inscription pour votre établissement « {etablissement.nom} ».\n\n"
+            f"Malheureusement, votre dossier n'a pas pu être validé pour le motif suivant :\n"
+            f"« {motif_clean} »\n\n"
+            f"Vous pouvez vous connecter à votre espace pour mettre à jour vos pièces justificatives "
+            f"ou contacter le support partenaire AYYOU pour obtenir de l'aide."
+        )
+
+        notification = Notification.objects.create(
+            utilisateur=proprietaire,
+            type_notification=Notification.TYPE_PRO_VALIDATION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='Etablissement',
+            reference_id=str(etablissement.id),
+            metadata={
+                'event': 'PRO_ACCOUNT_REJECTED',
+                'type': etablissement.type_etablissement,
+                'name': etablissement.nom,
+                'motif': motif_clean
+            }
+        )
+        cls.dispatch_email_on_commit(notification)
+        from apps.notifications.n8n_service import N8nNotificationService
+        N8nNotificationService.send_pro_rejection_for_etablissement(etablissement, motif_clean)
+        return notification
+
+    @classmethod
+    def send_pro_approval_email_for_driver(cls, driver: ProfilLivreur) -> Optional[Notification]:
+        """
+        Génère et déclenche l'email de validation de compte pour un Livreur.
+        """
+        utilisateur = driver.utilisateur
+        if not utilisateur:
+            logger.warning(f"[EMAIL SERVICE] Impossible d'envoyer l'email d'approbation : Livreur #{driver.id} sans utilisateur.")
+            return None
+
+        driver_name = utilisateur.get_full_name() or utilisateur.email
+        frontend_base = os.getenv('FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        login_url = f"{frontend_base}/delivery/login"
+
+        titre = "Félicitations ! Votre compte Livreur AYYOU a été validé"
+        message = (
+            f"Bonjour {driver_name},\n\n"
+            f"Nous avons le plaisir de vous informer que votre profil de livreur partenaire AYYOU "
+            f"a été vérifié et validé avec succès.\n\n"
+            f"Vous pouvez dès à présent vous connecter à votre espace livreur pour commencer à recevoir des courses :\n"
+            f"{login_url}\n\n"
+            f"Bienvenue dans l'équipe des livreurs AYYOU !"
+        )
+
+        notification = Notification.objects.create(
+            utilisateur=utilisateur,
+            type_notification=Notification.TYPE_PRO_VALIDATION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='ProfilLivreur',
+            reference_id=str(driver.id),
+            metadata={
+                'event': 'PRO_ACCOUNT_APPROVED',
+                'type': 'LIVREUR',
+                'name': driver_name,
+                'login_url': login_url
+            }
+        )
+        cls.dispatch_email_on_commit(notification)
+        from apps.notifications.n8n_service import N8nNotificationService
+        N8nNotificationService.send_pro_approval_for_driver(driver)
+        return notification
+
+    @classmethod
+    def send_pro_rejection_email_for_driver(cls, driver: ProfilLivreur, motif: str) -> Optional[Notification]:
+        """
+        Génère et déclenche l'email de refus de compte pour un Livreur.
+        """
+        utilisateur = driver.utilisateur
+        if not utilisateur:
+            logger.warning(f"[EMAIL SERVICE] Impossible d'envoyer l'email de refus : Livreur #{driver.id} sans utilisateur.")
+            return None
+
+        driver_name = utilisateur.get_full_name() or utilisateur.email
+        motif_clean = (motif or 'Dossier non conforme').strip()
+
+        titre = "Information concernant votre demande de compte Livreur AYYOU"
+        message = (
+            f"Bonjour {driver_name},\n\n"
+            f"Nous avons examiné votre dossier de candidature pour devenir livreur partenaire AYYOU.\n\n"
+            f"Malheureusement, votre profil n'a pas pu être validé pour le motif suivant :\n"
+            f"« {motif_clean} »\n\n"
+            f"Vous pouvez réviser vos documents ou contacter l'équipe support pour toute question."
+        )
+
+        notification = Notification.objects.create(
+            utilisateur=utilisateur,
+            type_notification=Notification.TYPE_PRO_VALIDATION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='ProfilLivreur',
+            reference_id=str(driver.id),
+            metadata={
+                'event': 'PRO_ACCOUNT_REJECTED',
+                'type': 'LIVREUR',
+                'name': driver_name,
+                'motif': motif_clean
+            }
+        )
+        cls.dispatch_email_on_commit(notification)
+        from apps.notifications.n8n_service import N8nNotificationService
+        N8nNotificationService.send_pro_rejection_for_driver(driver, motif_clean)
+        return notification
+
+    @classmethod
+    def send_subscription_confirmation_email(cls, abonnement) -> Optional[Notification]:
+        """
+        Envoyer un email de confirmation d'activation ou renouvellement d'abonnement PRO.
+        """
+        etablissement = abonnement.etablissement
+        proprietaire = etablissement.proprietaire
+        if not proprietaire:
+            logger.warning(f"[EMAIL SERVICE] Etablissement #{etablissement.id} sans propriétaire pour email abonnement.")
+            return None
+
+        date_exp_str = abonnement.date_expiration.strftime('%d/%m/%Y à %H:%M') if abonnement.date_expiration else ''
+        ref_tx = abonnement.paiement.reference if abonnement.paiement else 'N/A'
+        titre = f"Confirmation d'abonnement PRO AYYOU — {etablissement.nom}"
+        message = (
+            f"Bonjour {etablissement.nom},\n\n"
+            f"Votre paiement d'abonnement PRO AYYOU de {abonnement.montant:,.0f} FCFA a été confirmé avec succès.\n\n"
+            f"Détails de l'abonnement :\n"
+            f"- Établissement : {etablissement.nom}\n"
+            f"- Statut : ACTIF\n"
+            f"- Période : du {abonnement.date_debut.strftime('%d/%m/%Y')} au {date_exp_str}\n"
+            f"- Référence transaction : {ref_tx}\n\n"
+            f"Votre établissement, vos produits et vos vidéos sont désormais visibles sur la plateforme AYYOU.\n\n"
+            f"Merci de votre confiance !"
+        )
+
+
+        notification = Notification.objects.create(
+            utilisateur=proprietaire,
+            type_notification=Notification.TYPE_SUBSCRIPTION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='AbonnementPro',
+            reference_id=str(abonnement.id),
+            metadata={
+                'event': 'PRO_SUBSCRIPTION_CONFIRMED',
+                'etablissement_id': etablissement.id,
+                'etablissement_nom': etablissement.nom,
+                'montant': str(abonnement.montant),
+                'date_expiration': date_exp_str
+            }
+        )
+
+        cls.dispatch_email_on_commit(notification)
+        return notification
+
+    @classmethod
+    def send_subscription_expiration_reminder_email(cls, etablissement: Etablissement, days_remaining: int = 5) -> Optional[Notification]:
+        """
+        Envoyer un email de rappel d'expiration d'abonnement (J-5 ou J-1 / 24 heures).
+        """
+        proprietaire = etablissement.proprietaire
+        if not proprietaire:
+            logger.warning(f"[EMAIL SERVICE] Etablissement #{etablissement.id} sans propriétaire pour rappel abonnement.")
+            return None
+
+        date_exp_str = etablissement.date_expiration_abonnement.strftime('%d/%m/%Y à %H:%M') if etablissement.date_expiration_abonnement else ''
+        frontend_base = os.getenv('FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        renew_url = f"{frontend_base}/pro/subscription"
+
+        delai_str = "demain (dans 24h)" if days_remaining == 1 else f"dans {days_remaining} jours"
+        titre = f"Rappel : Votre abonnement PRO AYYOU expire {delai_str} — {etablissement.nom}"
+        message = (
+            f"Bonjour {etablissement.nom},\n\n"
+            f"Votre abonnement PRO AYYOU pour l'établissement « {etablissement.nom} » arrivera à expiration le {date_exp_str}.\n\n"
+            f"Afin d'éviter toute interruption de la visibilité de votre établissement, de vos produits et de vos vidéos sur AYYOU, "
+            f"ainsi que le blocage des nouvelles commandes, nous vous invitons à renouveler votre abonnement mensuel (10 000 FCFA) depuis votre espace PRO :\n"
+            f"{renew_url}\n\n"
+            f"Merci de faire partie de la communauté AYYOU !"
+        )
+
+        notification = Notification.objects.create(
+            utilisateur=proprietaire,
+            type_notification=Notification.TYPE_SUBSCRIPTION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='Etablissement',
+            reference_id=str(etablissement.id),
+            metadata={
+                'event': f'PRO_SUBSCRIPTION_REMINDER_J{days_remaining}',
+                'etablissement_id': etablissement.id,
+                'etablissement_nom': etablissement.nom,
+                'date_expiration': date_exp_str,
+                'renew_url': renew_url,
+                'days_remaining': days_remaining
+            }
+        )
+        cls.dispatch_email_on_commit(notification)
+        return notification
+
+    @classmethod
+    def send_subscription_suspension_email(cls, etablissement: Etablissement) -> Optional[Notification]:
+        """
+        Envoyer un email de notification de suspension lorsque l'abonnement PRO est expiré.
+        """
+        proprietaire = etablissement.proprietaire
+        if not proprietaire:
+            logger.warning(f"[EMAIL SERVICE] Etablissement #{etablissement.id} sans propriétaire pour email suspension.")
+            return None
+
+        frontend_base = os.getenv('FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        renew_url = f"{frontend_base}/pro/subscription"
+
+        titre = f"Avis de suspension : Votre abonnement PRO AYYOU a expiré — {etablissement.nom}"
+        message = (
+            f"Bonjour {etablissement.nom},\n\n"
+            f"Nous vous informons que votre abonnement PRO AYYOU pour l'établissement « {etablissement.nom} » a expiré.\n\n"
+            f"Conséquences de la suspension :\n"
+            f"- Votre établissement et vos produits ne sont plus visibles par les clients sur la plateforme.\n"
+            f"- Vos vidéos du Feed AYYOU sont masquées.\n"
+            f"- La création et la modification de vos plats/menus sont suspendues.\n"
+            f"- Vous ne pouvez plus recevoir de nouvelles commandes.\n\n"
+            f"Pour réactiver instantanément votre compte et restaurer l'ensemble de vos fonctionnalités, vous pouvez renouveler votre abonnement mensuel (10 000 FCFA) en 1 clic via PayTech :\n"
+            f"{renew_url}\n\n"
+            f"L'équipe AYYOU reste à votre disposition."
+        )
+
+        notification = Notification.objects.create(
+            utilisateur=proprietaire,
+            type_notification=Notification.TYPE_SUBSCRIPTION,
+            canal=Notification.CANAL_EMAIL,
+            titre=titre,
+            message=message,
+            statut=Notification.STATUT_EN_ATTENTE,
+            reference_type='Etablissement',
+            reference_id=str(etablissement.id),
+            metadata={
+                'event': 'PRO_SUBSCRIPTION_SUSPENDED',
+                'etablissement_id': etablissement.id,
+                'etablissement_nom': etablissement.nom,
+                'renew_url': renew_url
+            }
+        )
+        cls.dispatch_email_on_commit(notification)
+        return notification
+
+

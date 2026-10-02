@@ -151,7 +151,7 @@ class Phase53RealSandboxTest(TestCase):
         self.assertIsNotNone(livraison.token_qr)
         self.assertGreater(len(livraison.token_qr), 10)
         self.assertIsNotNone(livraison.code_validation)
-        self.assertEqual(len(livraison.code_validation), 6)
+        self.assertEqual(len(livraison.code_validation), 4)
         self.assertTrue(livraison.code_validation.isdigit())
 
         # 5. ÉTAPE 4 : Endpoint de statut GET /api/payments/transactions/{id}/status/

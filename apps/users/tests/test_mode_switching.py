@@ -189,7 +189,7 @@ class UserModeSwitchingTestCase(APITestCase):
             livreur=self.profil_livreur,
             statut=Livraison.STATUT_ACCEPTEE,
             token_qr='test_token_123456',
-            code_validation='123456'
+            code_validation='1234'
         )
 
 

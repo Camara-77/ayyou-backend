@@ -1,0 +1,87 @@
+{
+  "timestamp": "2026-10-02T01:00:02.255591Z",
+  "model_type": "LGBMRanker (LambdaMART)",
+  "model_version": "v3",
+  "status": "EXPERIMENTAL / OFFLINE ONLY",
+  "is_production_ready": false,
+  "dataset": {
+    "total_events": 104,
+    "total_sessions": 12,
+    "auth_users": 5,
+    "observed_publications": 8,
+    "train_rows": 73,
+    "val_rows": 31,
+    "train_sessions": 9,
+    "val_sessions": 3
+  },
+  "feature_columns": [
+    "is_authenticated",
+    "user_account_age_days",
+    "user_total_orders",
+    "user_avg_order_amount",
+    "user_total_likes",
+    "user_total_events",
+    "user_avg_watch_time",
+    "user_avg_completion_rate",
+    "user_top_category_id",
+    "video_recency_hours",
+    "video_duration_seconds",
+    "video_total_likes",
+    "video_total_shares",
+    "dish_price",
+    "dish_category_id",
+    "resto_rating",
+    "resto_reviews_count",
+    "feed_position",
+    "hour_of_day",
+    "day_of_week"
+  ],
+  "target_column": "target_relevance",
+  "metrics_validation": {
+    "ndcg@5": 0.4987,
+    "ndcg@10": 0.7149,
+    "mrr": 0.5833,
+    "evaluated_sessions_count": 2
+  },
+  "metrics_train": {
+    "ndcg@5": 0.9298,
+    "ndcg@10": 0.9604,
+    "mrr": 0.8889,
+    "evaluated_sessions_count": 9
+  },
+  "metrics_popularity_baseline": {
+    "ndcg@5": 0.6721,
+    "ndcg@10": 0.744,
+    "mrr": 0.6667,
+    "evaluated_sessions_count": 2
+  },
+  "metrics_v2_reference": {
+    "ndcg@5": 0.7408,
+    "ndcg@10": 0.7491,
+    "mrr": 0.2917,
+    "evaluated_sessions_count": 2
+  },
+  "feature_importances": {
+    "user_avg_watch_time": 90.0227,
+    "resto_reviews_count": 30.1461,
+    "user_total_events": 13.3122,
+    "video_duration_seconds": 4.0268,
+    "dish_category_id": 2.1272,
+    "feed_position": 1.667,
+    "video_recency_hours": 0.9494,
+    "resto_rating": 0.4024,
+    "video_total_shares": 0.3916,
+    "is_authenticated": 0.0,
+    "user_account_age_days": 0.0,
+    "user_total_orders": 0.0,
+    "user_avg_order_amount": 0.0,
+    "user_total_likes": 0.0,
+    "user_avg_completion_rate": 0.0,
+    "user_top_category_id": 0.0,
+    "video_total_likes": 0.0,
+    "dish_price": 0.0,
+    "hour_of_day": 0.0,
+    "day_of_week": 0.0
+  },
+  "limitations_note": "Modèle expérimental entraîné sur un échantillon restreint (104 événements réels). Ne pas utiliser en production."
+}

@@ -22,15 +22,16 @@ from .serializers import (
     LikeProduitSerializer
 )
 from .services import CloudinaryFeedService
+from .search_engine import CatalogSearchEngine
 
 
 class StandardCatalogPagination(PageNumberPagination):
     """
     Pagination standard pour la consultation des listes du catalogue AYYOU.
     """
-    page_size = 10
+    page_size = 50
     page_size_query_param = 'page_size'
-    max_page_size = 100
+    max_page_size = 200
 
 
 class CategorieListView(APIView):
@@ -50,11 +51,20 @@ class EtablissementListView(APIView):
     """
     GET /api/catalog/establishments/
     Liste les établissements (Restaurants et Vendeurs à domicile) avec filtres.
+    Masque automatiquement les établissements dont l'abonnement n'est pas ACTIF pour les clients public.
     """
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        from django.utils import timezone
         queryset = Etablissement.objects.select_related('proprietaire').all().order_by('-date_creation')
+
+        # Filtrage strict de visibilité publique par abonnement PRO
+        if not (request.user.is_authenticated and request.user.is_superuser):
+            queryset = queryset.filter(
+                statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF,
+                date_expiration_abonnement__gt=timezone.now()
+            )
 
         # Filtre type d'établissement (RESTAURANT / VENDEUR)
         type_etablissement = request.query_params.get('type_etablissement')
@@ -71,20 +81,20 @@ class EtablissementListView(APIView):
         if specialite:
             queryset = queryset.filter(specialite__icontains=specialite)
 
-        # Recherche textuelle par nom / adresse
+        # Recherche textuelle intelligente & tolérante
         search = request.query_params.get('search') or request.query_params.get('q') or request.query_params.get('nom')
         if search:
-            queryset = queryset.filter(
-                Q(nom__icontains=search) | Q(adresse__icontains=search) | Q(specialite__icontains=search)
-            )
+            queryset_list = CatalogSearchEngine.search_etablissements(queryset, search)
+        else:
+            queryset_list = list(queryset)
 
         paginator = StandardCatalogPagination()
-        page = paginator.paginate_queryset(queryset, request, view=self)
+        page = paginator.paginate_queryset(queryset_list, request, view=self)
         if page is not None:
             serializer = EtablissementSerializer(page, many=True)
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = EtablissementSerializer(queryset, many=True)
+        serializer = EtablissementSerializer(queryset_list, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -96,7 +106,17 @@ class EtablissementDetailView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, pk):
+        from django.utils import timezone
+        from django.http import Http404
+
         etablissement = get_object_or_404(Etablissement.objects.select_related('proprietaire'), pk=pk)
+
+        # Vérification d'accès : SuperAdmin ou Propriétaire peuvent consulter même si inactif
+        if not (request.user.is_authenticated and (request.user.is_superuser or etablissement.proprietaire == request.user)):
+            now = timezone.now()
+            if etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF or not etablissement.date_expiration_abonnement or etablissement.date_expiration_abonnement <= now:
+                raise Http404("Établissement non disponible ou abonnement expiré.")
+
         serializer = EtablissementSerializer(etablissement)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -110,15 +130,23 @@ class ProduitListView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        from django.utils import timezone
         queryset = Produit.objects.select_related('etablissement', 'categorie').all().order_by('-date_creation')
 
-        # Filtre par catégorie (ID ou Slug)
+        # Filtrage strict de visibilité publique par abonnement PRO de l'établissement
+        if not (request.user.is_authenticated and request.user.is_superuser):
+            queryset = queryset.filter(
+                etablissement__statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF,
+                etablissement__date_expiration_abonnement__gt=timezone.now()
+            )
+
+        # Filtre par catégorie (ID, Slug ou Nom)
         categorie = request.query_params.get('categorie')
         if categorie:
             if categorie.isdigit():
-                queryset = queryset.filter(categorie_id=int(categorie))
+                queryset = queryset.filter(Q(categorie_id=int(categorie)) | Q(categorie__nom__icontains=categorie))
             else:
-                queryset = queryset.filter(categorie__slug=categorie)
+                queryset = queryset.filter(Q(categorie__slug=categorie) | Q(categorie__nom__icontains=categorie))
 
         # Filtre par établissement
         etablissement = request.query_params.get('etablissement')
@@ -133,20 +161,20 @@ class ProduitListView(APIView):
             elif est_disponible.lower() in ['false', '0']:
                 queryset = queryset.filter(est_disponible=False)
 
-        # Recherche textuelle par nom / description / tags
+        # Recherche textuelle intelligente & tolérante
         search = request.query_params.get('search') or request.query_params.get('q') or request.query_params.get('nom')
         if search:
-            queryset = queryset.filter(
-                Q(nom__icontains=search) | Q(description__icontains=search)
-            )
+            queryset_list = CatalogSearchEngine.search_produits(queryset, search)
+        else:
+            queryset_list = list(queryset)
 
         paginator = StandardCatalogPagination()
-        page = paginator.paginate_queryset(queryset, request, view=self)
+        page = paginator.paginate_queryset(queryset_list, request, view=self)
         if page is not None:
             serializer = ProduitListSerializer(page, many=True)
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = ProduitListSerializer(queryset, many=True)
+        serializer = ProduitListSerializer(queryset_list, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -158,8 +186,18 @@ class ProduitDetailView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, pk):
+        from django.utils import timezone
+        from django.http import Http404
+
         queryset = Produit.objects.select_related('etablissement', 'categorie').prefetch_related('variantes', 'options')
         produit = get_object_or_404(queryset, pk=pk)
+
+        # Vérification d'accès : SuperAdmin ou Propriétaire de l'établissement
+        if not (request.user.is_authenticated and (request.user.is_superuser or produit.etablissement.proprietaire == request.user)):
+            now = timezone.now()
+            if produit.etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF or not produit.etablissement.date_expiration_abonnement or produit.etablissement.date_expiration_abonnement <= now:
+                raise Http404("Produit non disponible ou abonnement établissement expiré.")
+
         serializer = ProduitDetailSerializer(produit)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -179,9 +217,17 @@ class PublicationFeedListView(APIView):
         return [permissions.AllowAny()]
 
     def get(self, request):
+        from django.utils import timezone
         queryset = PublicationFeed.objects.select_related(
             'etablissement', 'produit', 'produit__etablissement', 'produit__categorie'
         ).all().order_by('-date_publication')
+
+        # Filtrage strict de visibilité publique par abonnement PRO de l'établissement
+        if not (request.user.is_authenticated and request.user.is_superuser):
+            queryset = queryset.filter(
+                etablissement__statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF,
+                etablissement__date_expiration_abonnement__gt=timezone.now()
+            )
 
         # Filtre par établissement
         etablissement = request.query_params.get('etablissement') or request.query_params.get('etablissement_id')
@@ -190,12 +236,43 @@ class PublicationFeedListView(APIView):
 
         paginator = StandardCatalogPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
+
+        candidate_pubs = list(page) if page is not None else list(queryset)
+        session_id = request.query_params.get('session_id') or request.headers.get('X-Session-ID')
+
+        # 1. Expérimentation contrôlée (A/B Testing V3 vs Chronologique)
+        final_pubs = candidate_pubs
+        if candidate_pubs:
+            try:
+                from apps.telemetry.ml.experiment_service import RecommendationExperimentService
+                final_pubs = RecommendationExperimentService.process_feed_candidates(
+                    candidate_pubs=candidate_pubs,
+                    user=request.user,
+                    session_id=session_id
+                )
+            except Exception:
+                final_pubs = candidate_pubs
+
+        # 2. Exécution parallèle du Shadow Mode si activé dans les settings
+        if candidate_pubs:
+            try:
+                from apps.telemetry.ml.shadow_service import RecommendationShadowService
+                candidate_ids = [p.id for p in candidate_pubs]
+                RecommendationShadowService.run_shadow_scoring(
+                    publication_ids=candidate_ids,
+                    user=request.user,
+                    session_id=session_id
+                )
+            except Exception:
+                pass
+
         if page is not None:
-            serializer = PublicationFeedSerializer(page, many=True, context={'request': request})
+            serializer = PublicationFeedSerializer(final_pubs, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = PublicationFeedSerializer(queryset, many=True, context={'request': request})
+        serializer = PublicationFeedSerializer(final_pubs, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
     def post(self, request):
         # Chercher l'établissement appartenant à l'utilisateur connecté (RESTAURANT ou VENDEUR)
@@ -205,6 +282,15 @@ class PublicationFeedListView(APIView):
                 {"detail": _("Seul un établissement professionnel actif (Restaurant ou Vendeur) peut publier des vidéos.")},
                 status=status.HTTP_403_FORBIDDEN
             )
+
+        from django.utils import timezone
+        if not request.user.is_superuser:
+            if etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF or not etablissement.date_expiration_abonnement or etablissement.date_expiration_abonnement <= timezone.now():
+                return Response(
+                    {"detail": _("Votre abonnement PRO est expiré. Veuillez le renouveler pour pouvoir publier des vidéos.")},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
 
         video_file = request.FILES.get('video_file') or request.FILES.get('file') or request.FILES.get('media')
         media_url = request.data.get('media_url')
@@ -261,10 +347,35 @@ class PublicationFeedListView(APIView):
 
 class PublicationFeedDetailView(APIView):
     """
+    GET /api/catalog/feed/{id}/
+    Récupère une publication vidéo spécifique du Feed.
     DELETE /api/catalog/feed/{id}/
     Supprime une publication vidéo du Feed et retire le fichier média sur Cloudinary.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def get(self, request, pk):
+        from django.utils import timezone
+        publication = get_object_or_404(
+            PublicationFeed.objects.select_related('etablissement', 'produit'),
+            pk=pk
+        )
+
+        # Vérification d'accès public : l'établissement doit avoir un abonnement actif sauf si superuser
+        if not (request.user.is_authenticated and request.user.is_superuser):
+            etab = publication.etablissement
+            now = timezone.now()
+            if etab.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF or not etab.date_expiration_abonnement or etab.date_expiration_abonnement <= now:
+                return Response(
+                    {"detail": _("Cette vidéo n'est plus disponible.")},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        serializer = PublicationFeedSerializer(publication, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     def delete(self, request, pk):
         publication = get_object_or_404(PublicationFeed.objects.select_related('etablissement'), pk=pk)
@@ -286,14 +397,27 @@ class PublicationFeedDetailView(APIView):
 
 class LikeProduitView(APIView):
     """
+    GET /api/catalog/likes/
     POST /api/catalog/likes/
     DELETE /api/catalog/likes/
-    Enregistrer ou retirer un Like client sur un produit ou une publication.
+    Enregistrer, consulter ou retirer un Like client sur un produit ou une publication.
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    def get(self, request):
+        likes = LikeProduit.objects.filter(utilisateur=request.user).select_related(
+            'produit', 'produit__etablissement', 'produit__categorie',
+            'publication', 'publication__etablissement', 'publication__produit'
+        ).order_by('-date_creation')
+        serializer = LikeProduitSerializer(likes, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def post(self, request):
-        serializer = LikeProduitSerializer(data=request.data, context={'request': request})
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        if 'publication_feed' in data and 'publication' not in data:
+            data['publication'] = data['publication_feed']
+
+        serializer = LikeProduitSerializer(data=data, context={'request': request})
         if serializer.is_valid():
             like = serializer.save(utilisateur=request.user)
             # Incrémenter atomiquement le compteur de likes
@@ -307,7 +431,12 @@ class LikeProduitView(APIView):
 
     def delete(self, request):
         produit_id = request.data.get('produit') or request.query_params.get('produit')
-        publication_id = request.data.get('publication') or request.query_params.get('publication')
+        publication_id = (
+            request.data.get('publication') or
+            request.data.get('publication_feed') or
+            request.query_params.get('publication') or
+            request.query_params.get('publication_feed')
+        )
 
         if not produit_id and not publication_id:
             return Response(

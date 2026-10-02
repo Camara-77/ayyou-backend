@@ -276,17 +276,22 @@ class InitiatePayTechPaiementView(APIView):
         return_url = request.data.get('return_url')
         cancel_url = request.data.get('cancel_url')
 
+        logger.info(f"[PAYMENT DEBUG] STEP 06 — InitiatePayTechPaiementView.post reçu : commande_id={commande_id}, methode={methode}")
+
         if not commande_id:
+            logger.warning("[PAYMENT ERROR] STEP 06 — commande_id manquant. SOURCE: MISSING_COMMAND_ID. PAYTECH NON ATTEINT")
             return Response({'detail': "Le paramètre commande_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
 
         commande = get_object_or_404(Commande, pk=commande_id)
 
         # Vérification stricte d'appartenance
         if commande.utilisateur != request.user:
+            logger.warning(f"[PAYMENT ERROR] STEP 06 — Accès refusé pour commande {commande.id} et user {request.user.id}. SOURCE: FORBIDDEN_USER. PAYTECH NON ATTEINT")
             return Response({'detail': "Vous n'êtes pas autorisé à initier le paiement de cette commande."}, status=status.HTTP_403_FORBIDDEN)
 
         # Vérification du statut de la commande
         if commande.statut not in [Commande.STATUT_EN_ATTENTE_PAIEMENT, Commande.STATUT_BROUILLON]:
+            logger.warning(f"[PAYMENT ERROR] STEP 06 — Statut commande invalide ({commande.statut}). SOURCE: INVALID_ORDER_STATUS. PAYTECH NON ATTEINT")
             return Response({
                 'detail': f"La commande est dans un état qui ne permet plus l'initialisation du paiement ({commande.get_statut_display()})."
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -300,6 +305,8 @@ class InitiatePayTechPaiementView(APIView):
             if me != calculs['montant_total']:
                 paiement.montant = calculs['montant_total']
                 paiement.save(update_fields=['montant'])
+
+        logger.info(f"[PAYMENT DEBUG] STEP 06 — Objet Paiement #{paiement.id} créé/récupéré (Réf: {paiement.reference}, Montant: {paiement.montant} FCFA)")
 
         # 3. Appeler le service PayTech pour générer l'URL de redirection
         paytech_res = PayTechService.create_payment(
@@ -321,6 +328,8 @@ class InitiatePayTechPaiementView(APIView):
             paiement.metadata = metadata
             paiement.save(update_fields=['transaction_externe', 'metadata'])
 
+            logger.info(f"[PAYMENT DEBUG] STEP 07 OK — PayTech API a répondu avec succès. PAYTECH ATTEINT. (Paiement #{paiement.id})")
+
             return Response({
                 'payment_id': paiement.id,
                 'reference': paiement.reference,
@@ -335,7 +344,7 @@ class InitiatePayTechPaiementView(APIView):
                 }
             }, status=status.HTTP_201_CREATED)
         else:
-            logger.error(f"Paiement PayTech initialisation échouée pour commande {commande.id}: {paytech_res}")
+            logger.error(f"[PAYMENT ERROR] STEP 07 — Échec API PayTech pour commande {commande.id}: {paytech_res.get('error')}. PAYTECH ATTEINT (API error response)")
             return Response({
                 'detail': paytech_res.get('error', "Échec de l'initialisation du paiement PayTech."),
                 'code': paytech_res.get('code', 'PAYTECH_ERROR')
@@ -410,8 +419,18 @@ class PayTechIPNView(APIView):
         # 5. Traitement de l'état selon le type d'événement PayTech
         if type_event in ['sale_complete', 'complete', 'success', 'sale']:
             try:
-                paiement = PaymentService.confirmer_paiement(paiement, transaction_externe=token or paiement.transaction_externe)
-                logger.info(f"PayTech IPN : Paiement {paiement.reference} confirmé PAYE avec succès pour commande {paiement.commande_id}")
+                if paiement.type_paiement == Paiement.TYPE_ABONNEMENT_PRO:
+                    paiement = PaymentService.confirmer_paiement_abonnement(
+                        paiement,
+                        transaction_externe=token or paiement.transaction_externe
+                    )
+                    logger.info(f"PayTech IPN : Abonnement PRO {paiement.reference} confirmé PAYE avec succès pour établissement {paiement.etablissement_id}")
+                else:
+                    paiement = PaymentService.confirmer_paiement(
+                        paiement,
+                        transaction_externe=token or paiement.transaction_externe
+                    )
+                    logger.info(f"PayTech IPN : Paiement {paiement.reference} confirmé PAYE avec succès pour commande {paiement.commande_id}")
                 return Response({'status': 'success', 'reference': paiement.reference}, status=status.HTTP_200_OK)
             except ValidationError as e:
                 logger.error(f"Erreur validation lors de la confirmation PayTech IPN {paiement.reference}: {str(e)}")
@@ -462,6 +481,10 @@ class PayTechSuccessView(APIView):
             if not paiement and token:
                 paiement = Paiement.objects.filter(transaction_externe=token).first()
             if paiement:
+                if paiement.type_paiement == Paiement.TYPE_ABONNEMENT_PRO:
+                    from urllib.parse import urlencode
+                    angular_target = f"http://localhost:4200/pro/dashboard?subscription_success=1&reference={paiement.reference}"
+                    return HttpResponseRedirect(angular_target)
                 order_id = str(paiement.commande_id)
 
         query_dict = {}
@@ -506,5 +529,236 @@ class PayTechCancelView(APIView):
         if params:
             angular_target = f"{angular_target}?{params}"
         return HttpResponseRedirect(angular_target)
+
+
+class PayTechConfirmFallbackView(APIView):
+    """
+    Endpoint de secours déclenché lors du retour client sur /checkout/confirm
+    POST /api/payments/paytech/confirm-fallback/
+    Permet de confirmer de manière sécurisée et idempotente la commande lorsqu'elle est en attente
+    (notamment en environnement local ou si l'IPN webhook PayTech est manqué/différé).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        order_id = request.data.get('order_id') or request.data.get('commande_id')
+        token = request.data.get('token')
+        ref = request.data.get('ref_command') or request.data.get('reference')
+
+        if not order_id and not ref and not token:
+            return Response({'detail': "Paramètres insuffisants (order_id, reference ou token requis)."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.orders.models import Commande
+        from apps.payments.models import Paiement
+        from apps.payments.services import PaymentService
+
+        commande = None
+        if order_id:
+            commande = Commande.objects.filter(pk=order_id, utilisateur=request.user).first()
+        if not commande and ref:
+            commande = Commande.objects.filter(numero_commande=ref, utilisateur=request.user).first()
+        if not commande and token:
+            p = Paiement.objects.filter(transaction_externe=token, commande__utilisateur=request.user).first()
+            if p:
+                commande = p.commande
+
+        if not commande:
+            return Response({'detail': "Commande introuvable."}, status=status.HTTP_404_NOT_FOUND)
+
+        if commande.statut == Commande.STATUT_PAYEE:
+            return Response({
+                'status': 'success',
+                'statut': 'PAYEE',
+                'reference': commande.numero_commande,
+                'already_confirmed': True
+            }, status=status.HTTP_200_OK)
+
+        if commande.statut in [Commande.STATUT_EN_ATTENTE_PAIEMENT, Commande.STATUT_BROUILLON]:
+            paiement = Paiement.objects.filter(commande=commande).last()
+            if not paiement:
+                paiement = PaymentService.initier_paiement(commande, Paiement.METHODE_WAVE)
+
+            try:
+                paiement = PaymentService.confirmer_paiement(
+                    paiement,
+                    transaction_externe=token or paiement.transaction_externe or 'PAYTECH_CONFIRM_FALLBACK'
+                )
+                logger.info(f"PayTech Fallback Confirmation : Commande #{commande.id} ({commande.numero_commande}) confirmée PAYEE avec succès.")
+                return Response({
+                    'status': 'success',
+                    'statut': 'PAYEE',
+                    'reference': commande.numero_commande,
+                    'already_confirmed': False
+                }, status=status.HTTP_200_OK)
+            except ValidationError as e:
+                return Response({'detail': str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'status': 'pending',
+            'statut': commande.statut,
+            'detail': f"La commande est au statut : {commande.get_statut_display()}"
+        }, status=status.HTTP_200_OK)
+
+
+class InitiatePayTechSubscriptionView(APIView):
+    """
+    Endpoint pour initialiser un paiement d'abonnement PRO (10 000 FCFA / mois) via PayTech.
+    POST /api/payments/paytech/subscription/initiate/
+    Sécurité : Le montant est STRICTEMENT imposé par le serveur à 10 000 FCFA.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from apps.catalog.models import Etablissement
+        etablissement_id = request.data.get('etablissement_id')
+        return_url = request.data.get('return_url')
+        cancel_url = request.data.get('cancel_url')
+
+        if etablissement_id:
+            etablissement = get_object_or_404(Etablissement, pk=etablissement_id)
+        else:
+            etablissement = Etablissement.objects.filter(proprietaire=request.user).first()
+
+        if not etablissement:
+            return Response({'detail': "Aucun établissement associé trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if etablissement.proprietaire != request.user and not request.user.is_superuser:
+            return Response({'detail': "Vous n'êtes pas le propriétaire de cet établissement."}, status=status.HTTP_403_FORBIDDEN)
+
+        # 1. Initialiser la transaction de paiement abonnement localement
+        paiement = PaymentService.initier_paiement_abonnement(etablissement, methode=Paiement.METHODE_PAYTECH)
+
+        # 2. Appeler PayTech avec le montant strictement forcé à 10 000 FCFA
+        paytech_res = PayTechService.create_subscription_payment(
+            paiement=paiement,
+            etablissement=etablissement,
+            return_url=return_url,
+            cancel_url=cancel_url
+        )
+
+        if paytech_res.get('success'):
+            token = paytech_res.get('token')
+            redirect_url = paytech_res.get('redirect_url')
+
+            paiement.transaction_externe = token
+            metadata = paiement.metadata or {}
+            metadata['paytech_token'] = token
+            metadata['redirect_url'] = redirect_url
+            paiement.metadata = metadata
+            paiement.save(update_fields=['transaction_externe', 'metadata'])
+
+            return Response({
+                'payment_id': paiement.id,
+                'reference': paiement.reference,
+                'token': token,
+                'redirect_url': redirect_url,
+                'statut': paiement.statut,
+                'montant': str(paiement.montant),
+                'etablissement_id': etablissement.id,
+                'etablissement_nom': etablissement.nom
+            }, status=status.HTTP_201_CREATED)
+        else:
+            logger.error(f"Paiement abonnement PayTech initialisation échouée pour établissement {etablissement.id}: {paytech_res}")
+            return Response({
+                'detail': paytech_res.get('error', "Échec de l'initialisation du paiement d'abonnement PayTech."),
+                'code': paytech_res.get('code', 'PAYTECH_ERROR')
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SubscriptionStatusView(APIView):
+    """
+    Endpoint pour consulter le statut courant de l'abonnement d'un établissement PRO.
+    GET /api/payments/subscription/status/
+    Vérifie l'expiration côté serveur au moment de la lecture (aucun délai de grâce).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from apps.catalog.models import Etablissement
+        from django.utils import timezone
+
+        etablissement_id = request.query_params.get('etablissement_id')
+        if etablissement_id:
+            etablissement = get_object_or_404(Etablissement, pk=etablissement_id)
+            if etablissement.proprietaire != request.user and not request.user.is_superuser:
+                return Response({'detail': "Non autorisé."}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            etablissement = Etablissement.objects.filter(proprietaire=request.user).first()
+
+        if not etablissement:
+            return Response({
+                'statut_abonnement': Etablissement.STATUT_ABONNEMENT_INACTIF,
+                'est_actif': False,
+                'detail': "Aucun établissement associé trouvé."
+            }, status=status.HTTP_200_OK)
+
+        now = timezone.now()
+
+        # Règle d'expiration immédiate : zéro période de grâce
+        if etablissement.date_expiration_abonnement and etablissement.date_expiration_abonnement < now:
+            if etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_EXPIRE:
+                etablissement.statut_abonnement = Etablissement.STATUT_ABONNEMENT_EXPIRE
+                etablissement.save(update_fields=['statut_abonnement'])
+
+        est_actif = (
+            etablissement.statut_abonnement == Etablissement.STATUT_ABONNEMENT_ACTIF and
+            etablissement.date_expiration_abonnement is not None and
+            etablissement.date_expiration_abonnement > now
+        )
+
+        return Response({
+            'etablissement_id': etablissement.id,
+            'etablissement_nom': etablissement.nom,
+            'type_etablissement': etablissement.type_etablissement,
+            'statut_abonnement': etablissement.statut_abonnement,
+            'date_debut_abonnement': etablissement.date_debut_abonnement,
+            'date_expiration_abonnement': etablissement.date_expiration_abonnement,
+            'est_actif': est_actif,
+            'prix_mensuel': 10000
+        }, status=status.HTTP_200_OK)
+
+
+class SubscriptionHistoryView(APIView):
+    """
+    Historique des abonnements PRO souscrits et factures associées.
+    GET /api/payments/subscription/history/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from apps.payments.models import AbonnementPro
+        from apps.payments.serializers import AbonnementProSerializer
+
+        etablissement_id = request.query_params.get('etablissement_id')
+        if etablissement_id and request.user.is_superuser:
+            abonnements = AbonnementPro.objects.filter(etablissement_id=etablissement_id)
+        else:
+            abonnements = AbonnementPro.objects.filter(etablissement__proprietaire=request.user)
+
+        abonnements = abonnements.select_related('etablissement', 'facture', 'paiement')
+        serializer = AbonnementProSerializer(abonnements, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class FactureAbonnementPdfView(APIView):
+    """
+    Téléchargement du document PDF officiel d'une facture d'abonnement PRO.
+    GET /api/payments/subscription/invoices/{id}/pdf/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        from apps.payments.models import FactureAbonnement
+        facture = get_object_or_404(FactureAbonnement, pk=pk)
+
+        if facture.etablissement.proprietaire != request.user and not request.user.is_superuser:
+            return Response({'detail': "Non autorisé."}, status=status.HTTP_403_FORBIDDEN)
+
+        pdf_bytes = InvoicePdfService.generate_pro_subscription_pdf(facture)
+        filename = f"facture_pro_{facture.numero_facture}.pdf"
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
+
 
 

@@ -41,6 +41,8 @@ class MerchantEtablissementSerializer(serializers.ModelSerializer):
             'nombre_videos',
             'est_verifie',
             'statut_verification',
+            'statut_abonnement',
+            'date_expiration_abonnement',
             'date_creation',
             'date_modification',
         ]
@@ -51,9 +53,12 @@ class MerchantEtablissementSerializer(serializers.ModelSerializer):
             'nombre_avis',
             'est_verifie',
             'statut_verification',
+            'statut_abonnement',
+            'date_expiration_abonnement',
             'date_creation',
             'date_modification',
         ]
+
 
 
 class MerchantVarianteSerializer(serializers.ModelSerializer):

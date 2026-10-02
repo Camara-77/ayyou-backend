@@ -6,19 +6,24 @@ from .otp_service import OtpService
 
 class RegistrationService:
     """
-    Service métier responsable du parcours complet d'inscription Client AYYOU.
-    Exécuté dans une transaction atomique globale (transaction.atomic()).
+    Service métier responsable du parcours complet d'inscription Client et Livreur AYYOU.
+    Toutes les opérations d'écriture en base de données sont exécutées dans une transaction atomique SQL (transaction.atomic()).
+    En cas d'erreur ou d'exception à n'importe quelle étape, un rollback SQL complet est automatiquement effectué.
     """
 
     @classmethod
     @transaction.atomic
     def register_client(cls, validated_data: dict) -> Utilisateur:
         """
-        1. Création de l'Utilisateur (hachage mot de passe, email minuscules, telephone normalisé)
-        2. Création du ProfilClient (Relation 1:1)
-        3. Attribution du rôle CLIENT (Relation N:N via UtilisateurRole)
-        4. Génération de l'OTP SMS de vérification (6 chiffres)
-        5. Déclenchement du service d'envoi de SMS
+        Inscrit un nouveau client sur la plateforme AYYOU :
+        1. Extraction et nettoyage des données validées (prénom, nom, email, téléphone, mot de passe).
+        2. Création de l'entité Utilisateur (mot de passe haché avec PBKDF2, statut non vérifié est_verifie=False).
+        3. Création automatique du ProfilClient associé (Relation 1:1).
+        4. Attribution du rôle métier CLIENT (Relation N:N via UtilisateurRole).
+        5. Génération d'un code OTP SMS à 6 chiffres et déclenchement du service d'envoi.
+
+        :param validated_data: Dictionnaire contenant les champs nettoyés et validés par RegisterSerializer.
+        :return: L'instance Utilisateur nouvellement créée.
         """
         prenom = validated_data['prenom']
         nom = validated_data['nom']
@@ -26,7 +31,7 @@ class RegistrationService:
         numero_telephone = validated_data['numero_telephone']
         password = validated_data['password']
 
-        # 1. Création de l'Utilisateur avec statut non vérifié
+        # Étape 1 : Création de l'utilisateur central avec statut actif mais non vérifié (en attente du code OTP SMS)
         user = Utilisateur.objects.create_user(
             email=email,
             numero_telephone=numero_telephone,
@@ -37,17 +42,17 @@ class RegistrationService:
             est_verifie=False
         )
 
-        # 2. Création du ProfilClient associé
+        # Étape 2 : Création du profil client spécifique lié à cet utilisateur (Relation 1 à 1)
         ProfilClient.objects.create(utilisateur=user)
 
-        # 3. Récupération / Création du Rôle CLIENT et attribution
+        # Étape 3 : Récupération ou création du rôle CLIENT et enregistrement dans la table d'association UtilisateurRole
         role_client, _ = Role.objects.get_or_create(
             nom=Role.CLIENT,
             defaults={'description': 'Rôle Client acheteur AYYOU'}
         )
         UtilisateurRole.objects.create(utilisateur=user, role=role_client)
 
-        # 4 & 5. Génération de l'OTP SMS et déclenchement de l'envoi
+        # Étape 4 : Génération du jeton OTP SMS à 6 chiffres et déclenchement de l'envoi au numéro de téléphone
         OtpService.generate_and_send_otp(
             utilisateur=user,
             type_verification=VerificationOTP.VERIFICATION_TELEPHONE

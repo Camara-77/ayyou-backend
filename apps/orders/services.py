@@ -1,7 +1,9 @@
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 from decimal import Decimal
+
 
 from apps.users.models import Utilisateur
 from apps.catalog.models import Produit, VarianteProduit, OptionProduit, Etablissement
@@ -54,6 +56,15 @@ class CartService:
         # 2. Vérification du statut de l'établissement
         if produit.etablissement.statut == Etablissement.STATUT_FERME:
             raise ValidationError(_(f"L'établissement '{produit.etablissement.nom}' est actuellement fermé."))
+
+        now = timezone.now()
+        if (
+            produit.etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF
+            or not produit.etablissement.date_expiration_abonnement
+            or produit.etablissement.date_expiration_abonnement <= now
+        ):
+            raise ValidationError(_(f"L'établissement '{produit.etablissement.nom}' ne peut plus recevoir de commandes (abonnement suspendu)."))
+
 
         # 3. Validation de la variante
         variante = None
@@ -205,11 +216,19 @@ class OrderService:
             telephone_destinataire = utilisateur.numero_telephone
 
         # 1. Vérification globale de la disponibilité des produits et établissements
+        now = timezone.now()
         for item in items:
             if not item.produit.est_disponible:
                 raise ValidationError(_(f"Le produit '{item.produit.nom}' n'est plus disponible au catalogue."))
             if item.produit.etablissement.statut == Etablissement.STATUT_FERME:
                 raise ValidationError(_(f"L'établissement '{item.produit.etablissement.nom}' est actuellement fermé."))
+            if (
+                item.produit.etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF
+                or not item.produit.etablissement.date_expiration_abonnement
+                or item.produit.etablissement.date_expiration_abonnement <= now
+            ):
+                raise ValidationError(_(f"L'établissement '{item.produit.etablissement.nom}' ne peut plus recevoir de commandes (abonnement expiré)."))
+
 
         # 2. Création de la Commande principale
         commande = Commande.objects.create(

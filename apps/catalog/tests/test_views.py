@@ -64,6 +64,10 @@ class CatalogViewsTestCase(APITestCase):
             ordre=3
         )
 
+        from django.utils import timezone
+        from datetime import timedelta
+        future_date = timezone.now() + timedelta(days=30)
+
         # Établissements
         self.restaurant = Etablissement.objects.create(
             nom="Chez Loutcha Plateau",
@@ -74,7 +78,9 @@ class CatalogViewsTestCase(APITestCase):
             longitude=-17.4381,
             specialite="Cuisine Sénégalaise",
             statut=Etablissement.STATUT_OUVERT,
-            est_verifie=True
+            est_verifie=True,
+            statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF,
+            date_expiration_abonnement=future_date
         )
 
         self.vendeur = Etablissement.objects.create(
@@ -83,8 +89,11 @@ class CatalogViewsTestCase(APITestCase):
             adresse="Almadies, Dakar",
             specialite="Pâtisserie & Gâteaux",
             statut=Etablissement.STATUT_OUVERT,
-            est_verifie=True
+            est_verifie=True,
+            statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF,
+            date_expiration_abonnement=future_date
         )
+
 
         # Produit
         self.produit = Produit.objects.create(

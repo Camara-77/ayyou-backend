@@ -4,7 +4,9 @@ from apps.payments.views import (
     PaiementViewSet, FactureViewSet,
     InitiatePaydunyaPaiementView, PaydunyaIPNView,
     InitiatePayTechPaiementView, PayTechIPNView,
-    PayTechSuccessView, PayTechCancelView
+    PayTechSuccessView, PayTechCancelView, PayTechConfirmFallbackView,
+    InitiatePayTechSubscriptionView, SubscriptionStatusView,
+    SubscriptionHistoryView, FactureAbonnementPdfView
 )
 
 app_name = 'payments'
@@ -20,6 +22,15 @@ urlpatterns = [
     path('paytech/ipn/', PayTechIPNView.as_view(), name='paytech-ipn'),
     path('paytech/success/', PayTechSuccessView.as_view(), name='paytech-success'),
     path('paytech/cancel/', PayTechCancelView.as_view(), name='paytech-cancel'),
+    path('paytech/confirm-fallback/', PayTechConfirmFallbackView.as_view(), name='paytech-confirm-fallback'),
+    
+    # Endpoints Abonnement PRO
+    path('subscription/initiate/', InitiatePayTechSubscriptionView.as_view(), name='subscription-initiate'),
+    path('subscription/status/', SubscriptionStatusView.as_view(), name='subscription-status'),
+    path('subscription/history/', SubscriptionHistoryView.as_view(), name='subscription-history'),
+    path('subscription/invoices/<int:pk>/pdf/', FactureAbonnementPdfView.as_view(), name='subscription-invoice-pdf'),
+
     path('', include(router.urls)),
 ]
+
 

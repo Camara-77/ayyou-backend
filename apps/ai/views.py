@@ -48,7 +48,9 @@ class AIChatView(APIView):
             message=message,
             user_name=user_name,
             context=context,
-            history=history
+            history=history,
+            user=request.user,
+            request=request
         )
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -69,7 +71,12 @@ class AITranscribeView(APIView):
         audio_file = request.FILES.get('audio')
         if not audio_file:
             return Response(
-                {"status": "error", "message": "Aucun fichier audio n'a été reçu."},
+                {
+                    "success": False,
+                    "status": "error",
+                    "message": "Aucun fichier audio n'a été reçu.",
+                    "error": "Aucun fichier audio n'a été reçu."
+                },
                 status=status.HTTP_200_OK
             )
 

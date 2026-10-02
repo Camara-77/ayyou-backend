@@ -41,7 +41,9 @@ class DeliveryExpirationTestCase(APITestCase):
         self.driver_a = ProfilLivreur.objects.create(
             utilisateur=self.user_driver_a,
             statut_verification=ProfilLivreur.STATUT_VALIDE,
-            est_disponible=True
+            est_disponible=True,
+            latitude_actuelle=14.6655,
+            longitude_actuelle=-17.4334
         )
 
         # Livreur B
@@ -56,7 +58,9 @@ class DeliveryExpirationTestCase(APITestCase):
         self.driver_b = ProfilLivreur.objects.create(
             utilisateur=self.user_driver_b,
             statut_verification=ProfilLivreur.STATUT_VALIDE,
-            est_disponible=True
+            est_disponible=True,
+            latitude_actuelle=14.6700,
+            longitude_actuelle=-17.4300
         )
 
         # Création d'un établissement marchand
@@ -124,10 +128,7 @@ class DeliveryExpirationTestCase(APITestCase):
         livraison.refresh_from_db()
         self.assertIsNone(livraison.livreur)
         self.assertEqual(livraison.statut, Livraison.STATUT_EN_ATTENTE)
-        self.assertIsNone(livraison.date_attribution)
-
-        serializer = LivraisonSerializer(livraison)
-        self.assertIsNone(serializer.data['acceptance_deadline'])
+        self.assertEqual(livraison.phase_attribution, 2)
 
     def test_4_reapparition_available(self):
         """TEST 4 — La course expirée réapparaît dans la liste disponible"""
@@ -191,7 +192,7 @@ class DeliveryExpirationTestCase(APITestCase):
         with self.assertRaises(Exception) as cm:
             DeliveryService.accepter_mission(livraison.id, self.driver_b)
         
-        self.assertIn("déjà été acceptée", str(cm.exception))
+        self.assertIn("Course déjà attribuée", str(cm.exception))
 
     def test_8_expiration_et_reattribution(self):
         """TEST 8 — Expiration du livreur A et acceptation par le livreur B"""

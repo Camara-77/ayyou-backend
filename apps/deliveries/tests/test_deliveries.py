@@ -236,7 +236,9 @@ class LivreurIntegrationTestCase(TestCase):
         UtilisateurRole.objects.create(utilisateur=self.user_driver_a, role=self.role_livreur)
         self.profil_driver_a = ProfilLivreur.objects.create(
             utilisateur=self.user_driver_a,
-            statut_verification=ProfilLivreur.STATUT_VALIDE
+            statut_verification=ProfilLivreur.STATUT_VALIDE,
+            latitude_actuelle=14.6655,
+            longitude_actuelle=-17.4334
         )
         self.profil_driver_a.est_disponible = True
         self.profil_driver_a.save()
@@ -252,7 +254,9 @@ class LivreurIntegrationTestCase(TestCase):
         UtilisateurRole.objects.create(utilisateur=self.user_driver_b, role=self.role_livreur)
         self.profil_driver_b = ProfilLivreur.objects.create(
             utilisateur=self.user_driver_b,
-            statut_verification=ProfilLivreur.STATUT_VALIDE
+            statut_verification=ProfilLivreur.STATUT_VALIDE,
+            latitude_actuelle=14.6700,
+            longitude_actuelle=-17.4300
         )
         self.profil_driver_b.est_disponible = True
         self.profil_driver_b.save()
@@ -310,8 +314,7 @@ class LivreurIntegrationTestCase(TestCase):
 
     def test_relation_livraison_et_profil_livreur_retention(self):
         """Vérifier la relation entre Livraison et ProfilLivreur et la stratégie SET_NULL."""
-        self.assertIsNone(self.livraison.livreur)
-        self.livraison.livreur = self.profil_driver_a
+        self.assertEqual(self.livraison.livreur, self.profil_driver_a)
         self.livraison.save()
 
         self.livraison.refresh_from_db()
@@ -366,7 +369,7 @@ class LivreurIntegrationTestCase(TestCase):
         self.api_client.force_authenticate(user=self.user_driver_b)
         res2 = self.api_client.post(url)
         self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("déjà été acceptée par un autre livreur", str(res2.data))
+        self.assertIn("Course déjà attribuée", str(res2.data))
 
     def test_pickup_commande_et_isolation(self):
         """Vérifier la déclaration de récupération (pickup) et l'isolation entre livreurs."""

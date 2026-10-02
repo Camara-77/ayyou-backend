@@ -97,6 +97,28 @@ class Etablissement(models.Model):
         db_index=True
     )
 
+    STATUT_ABONNEMENT_INACTIF = 'INACTIF'
+    STATUT_ABONNEMENT_EN_ATTENTE = 'EN_ATTENTE_PAIEMENT'
+    STATUT_ABONNEMENT_ACTIF = 'ACTIF'
+    STATUT_ABONNEMENT_EXPIRE = 'EXPIRE'
+
+    CHOIX_STATUT_ABONNEMENT = [
+        (STATUT_ABONNEMENT_INACTIF, _('Inactif')),
+        (STATUT_ABONNEMENT_EN_ATTENTE, _('En attente de paiement')),
+        (STATUT_ABONNEMENT_ACTIF, _('Actif')),
+        (STATUT_ABONNEMENT_EXPIRE, _('Expiré')),
+    ]
+
+    statut_abonnement = models.CharField(
+        _("statut d'abonnement"),
+        max_length=30,
+        choices=CHOIX_STATUT_ABONNEMENT,
+        default=STATUT_ABONNEMENT_INACTIF,
+        db_index=True
+    )
+    date_debut_abonnement = models.DateTimeField(_("date de début d'abonnement"), null=True, blank=True)
+    date_expiration_abonnement = models.DateTimeField(_("date d'expiration d'abonnement"), null=True, blank=True, db_index=True)
+
     date_creation = models.DateTimeField(_('date de création'), auto_now_add=True)
     date_modification = models.DateTimeField(_('date de modification'), auto_now=True)
 
@@ -113,6 +135,13 @@ class Etablissement(models.Model):
             self.est_verifie = False
 
     def save(self, *args, **kwargs):
+        if self.pk is None and not self.date_debut_abonnement:
+            from django.utils import timezone
+            from apps.payments.services import PaymentService
+            now = timezone.now()
+            self.date_debut_abonnement = now
+            self.date_expiration_abonnement = PaymentService.ajouter_un_mois_calendaire(now)
+            self.statut_abonnement = self.STATUT_ABONNEMENT_ACTIF
         self.clean()
         super().save(*args, **kwargs)
 

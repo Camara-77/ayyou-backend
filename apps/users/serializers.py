@@ -7,6 +7,18 @@ class ProfilClientSerializer(serializers.ModelSerializer):
     """
     Serializer pour le profil spécifique au Client AYYOU.
     """
+    photo_avatar = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    date_naissance = serializers.DateField(required=False, allow_null=True)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            if data.get('date_naissance') == '' or data.get('date_naissance') == 'null':
+                data['date_naissance'] = None
+            if data.get('photo_avatar') == '':
+                data['photo_avatar'] = None
+        return super().to_internal_value(data)
+
     class Meta:
         model = ProfilClient
         fields = [
@@ -28,6 +40,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
     Serializer complet pour la consultation et la mise à jour du profil du client connecté.
     Gère la mise à jour des champs de l'Utilisateur et de son ProfilClient lié.
     """
+    prenom = serializers.CharField(required=False, allow_blank=True)
+    nom = serializers.CharField(required=False, allow_blank=True)
     profil_client = ProfilClientSerializer(required=False)
     nom_complet = serializers.SerializerMethodField()
     available_modes = serializers.SerializerMethodField()
@@ -101,7 +115,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         # Mettre à jour les champs directs de l'utilisateur
         for attr, value in validated_data.items():
             if attr in ['prenom', 'nom', 'email']:
-                setattr(instance, attr, value)
+                if value is not None and (value != '' or not getattr(instance, attr, '')):
+                    setattr(instance, attr, value)
 
         instance.save()
 

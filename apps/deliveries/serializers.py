@@ -29,10 +29,10 @@ class LivraisonSerializer(serializers.ModelSerializer):
     livreur_latitude = serializers.ReadOnlyField(source='livreur.latitude_actuelle', allow_null=True)
     livreur_longitude = serializers.ReadOnlyField(source='livreur.longitude_actuelle', allow_null=True)
     livreur_derniere_position_date = serializers.ReadOnlyField(source='livreur.date_derniere_position', allow_null=True)
-
     acceptance_deadline = serializers.SerializerMethodField()
     etablissements = serializers.SerializerMethodField()
     date_attribution = serializers.DateTimeField(read_only=True)
+    phase_attribution = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Livraison
@@ -68,6 +68,7 @@ class LivraisonSerializer(serializers.ModelSerializer):
             'methode_validation_display',
             'date_validation',
             'date_attribution',
+            'phase_attribution',
             'acceptance_deadline',
             'created_at',
             'updated_at'
@@ -82,6 +83,7 @@ class LivraisonSerializer(serializers.ModelSerializer):
             'methode_validation',
             'date_validation',
             'date_attribution',
+            'phase_attribution',
             'acceptance_deadline',
             'created_at',
             'updated_at'
@@ -89,9 +91,9 @@ class LivraisonSerializer(serializers.ModelSerializer):
 
     def get_acceptance_deadline(self, obj) -> str | None:
         from datetime import timedelta
-        # Le délai d'acceptation ne s'applique QUE si un livreur est affecté ET que la livraison n'est pas encore acceptée
-        if obj.livreur_id and obj.statut in [Livraison.STATUT_EN_ATTENTE, Livraison.STATUT_AFFECTEE] and obj.date_attribution:
-            deadline = obj.date_attribution + timedelta(minutes=2)
+        # Le délai d'acceptation de 90 secondes s'applique en phase d'attribution si non acceptée
+        if obj.statut in [Livraison.STATUT_EN_ATTENTE, Livraison.STATUT_AFFECTEE] and obj.date_attribution:
+            deadline = obj.date_attribution + timedelta(seconds=90)
             return deadline.isoformat()
         return None
 

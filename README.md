@@ -10,6 +10,26 @@ Service d'Authentification & Gestion des Identités.
 - **Python** : `3.12+`
 - **PostgreSQL** : `15+` (ou SQLite en fallback de développement local)
 - **Système d'Exploitation** : Windows (ou Linux/macOS)
+- **Docker & Docker Compose** (Optionnel pour lancement containerisé)
+
+---
+
+## 🐳 LANCEMENT RAPIDE AVEC DOCKER & DOCKER COMPOSE
+
+Pour lancer l'intégralité de la suite AYYOU (Frontend Angular 19 PWA + Backend Django 5 + PostgreSQL 16) en une seule commande :
+
+```bash
+# 1. Copier le fichier de configuration
+copy .env.example .env
+
+# 2. Construire et lancer tous les conteneurs
+docker compose build
+docker compose up -d
+```
+
+- **Frontend Angular 19 PWA** : [http://localhost](http://localhost)
+- **Backend Django API** : [http://localhost:8000/api/](http://localhost:8000/api/)
+- **Documentation Docker** : Référez-vous à [docs/dockerisation.md](docs/dockerisation.md).
 
 ---
 

@@ -65,7 +65,7 @@ class PayTechService:
         env = getattr(settings, 'PAYTECH_ENV', 'test')
 
         if not api_key or not api_secret:
-            logger.error("PayTech API Key ou API Secret manquants dans la configuration.")
+            logger.error("[PAYMENT ERROR] STEP 07 — Clés API PayTech manquantes (PAYTECH_API_KEY / PAYTECH_API_SECRET). PAYTECH NON ATTEINT")
             return {
                 'success': False,
                 'error': 'Clés API PayTech non configurées.',
@@ -119,6 +119,8 @@ class PayTechService:
             'custom_field': json.dumps(custom_data)
         }
 
+        logger.info(f"[PAYMENT DEBUG] STEP 07 — Envoi requête HTTP POST vers PayTech sn API (item_name: {payload['item_name']}, price: {montant_total_int} XOF, ref: {paiement.reference})")
+
         try:
             response = requests.post(
                 cls.PAYTECH_API_URL,
@@ -133,7 +135,7 @@ class PayTechService:
             if is_success:
                 token = data.get('token')
                 redirect_url = data.get('redirect_url')
-                logger.info(f"Paiement PayTech créé avec succès pour référence {paiement.reference}, token={token}")
+                logger.info(f"[PAYMENT DEBUG] STEP 07 OK — PayTech API a répondu PAYTECH ATTEINT. redirect_url_present={bool(redirect_url)}")
                 return {
                     'success': True,
                     'token': token,
@@ -143,7 +145,116 @@ class PayTechService:
                 }
             else:
                 errors = data.get('errors', data.get('detail', 'Erreur inconnue PayTech'))
-                logger.error(f"Échec création paiement PayTech pour {paiement.reference}: {errors}")
+                logger.error(f"[PAYMENT ERROR] STEP 07 — PayTech API a répondu avec échec : {errors}. PAYTECH ATTEINT")
+                return {
+                    'success': False,
+                    'error': str(errors),
+                    'raw_response': data
+                }
+        except requests.RequestException as e:
+            logger.error(f"[PAYMENT ERROR] STEP 07 — Exception réseau HTTP vers PayTech: {str(e)}. PAYTECH NON ATTEINT")
+            return {
+                'success': False,
+                'error': f"Erreur réseau lors de la communication avec PayTech: {str(e)}",
+                'code': 'NETWORK_ERROR'
+            }
+
+    @classmethod
+    def create_subscription_payment(
+        cls,
+        paiement: Paiement,
+        etablissement: Any,
+        return_url: Optional[str] = None,
+        cancel_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Effectue la demande d'initialisation de paiement d'abonnement PRO auprès de PayTech.
+        Le montant est STRICTEMENT imposé à 10 000 FCFA côté serveur.
+        """
+        api_key = getattr(settings, 'PAYTECH_API_KEY', '')
+        api_secret = getattr(settings, 'PAYTECH_API_SECRET', '')
+        env = getattr(settings, 'PAYTECH_ENV', 'test')
+
+        if not api_key or not api_secret:
+            logger.error("PayTech API Key ou API Secret manquants dans la configuration.")
+            return {
+                'success': False,
+                'error': 'Clés API PayTech non configurées.',
+                'code': 'MISSING_KEYS'
+            }
+
+        # Sécurité : Montant fixe serveur de 10 000 FCFA
+        montant_total_int = 10000
+
+        ipn_url = getattr(settings, 'PAYTECH_IPN_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/ipn/')
+        default_success = getattr(settings, 'PAYTECH_SUCCESS_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/success/')
+        default_cancel = getattr(settings, 'PAYTECH_CANCEL_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/cancel/')
+
+        def is_local(url: Optional[str]) -> bool:
+            if not url:
+                return True
+            u = url.lower()
+            return 'localhost' in u or '127.0.0.1' in u
+
+        success_url = return_url if (return_url and not is_local(return_url)) else default_success
+        cancel_url_req = cancel_url if (cancel_url and not is_local(cancel_url)) else default_cancel
+
+        custom_data = {
+            'paiement_id': paiement.id,
+            'etablissement_id': etablissement.id,
+            'reference': paiement.reference,
+            'type_paiement': Paiement.TYPE_ABONNEMENT_PRO,
+        }
+
+        headers = {
+            'API_KEY': api_key,
+            'API_SECRET': api_secret,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+
+        type_label = "Vendeur à domicile" if getattr(etablissement, 'type_etablissement', '') == 'VENDEUR' else "Restaurant"
+
+        payload = {
+            'item_name': f"Abonnement AYYOU Pro (1 mois) - {type_label}",
+            'item_price': montant_total_int,
+            'command_name': f"Abonnement PRO #{etablissement.id} ({paiement.reference})",
+            'ref_command': paiement.reference,
+            'currency': 'XOF',
+            'env': env,
+            'ipn_url': ipn_url,
+            'success_url': success_url,
+            'cancel_url': cancel_url_req,
+            'successRedirectUrl': success_url,
+            'cancelRedirectUrl': cancel_url_req,
+            'success_redirect_url': success_url,
+            'cancel_redirect_url': cancel_url_req,
+            'custom_field': json.dumps(custom_data)
+        }
+
+        try:
+            response = requests.post(
+                cls.PAYTECH_API_URL,
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=15
+            )
+            data = response.json()
+
+            is_success = data.get('success') in (1, True, '1', 'true')
+            if is_success:
+                token = data.get('token')
+                redirect_url = data.get('redirect_url')
+                logger.info(f"Paiement PayTech Abonnement créé avec succès pour référence {paiement.reference}, token={token}")
+                return {
+                    'success': True,
+                    'token': token,
+                    'redirect_url': redirect_url,
+                    'raw_response': data
+                }
+            else:
+                errors = data.get('errors', data.get('detail', 'Erreur inconnue PayTech'))
+                logger.error(f"Échec création paiement PayTech Abonnement pour {paiement.reference}: {errors}")
                 return {
                     'success': False,
                     'error': str(errors),

@@ -85,3 +85,30 @@ class PayoutSerializer(serializers.ModelSerializer):
             return obj.livreur.utilisateur.get_full_name()
         return "Livreur"
 
+
+class FactureAbonnementSerializer(serializers.ModelSerializer):
+    class Meta:
+        from apps.payments.models import FactureAbonnement
+        model = FactureAbonnement
+        fields = [
+            'id', 'numero_facture', 'nom_etablissement_snapshot',
+            'type_etablissement_snapshot', 'nom_proprietaire_snapshot',
+            'email_proprietaire_snapshot', 'montant_ht', 'montant_total',
+            'date_emission'
+        ]
+
+
+class AbonnementProSerializer(serializers.ModelSerializer):
+    facture = FactureAbonnementSerializer(read_only=True)
+    etablissement_nom = serializers.CharField(source='etablissement.nom', read_only=True)
+
+    class Meta:
+        from apps.payments.models import AbonnementPro
+        model = AbonnementPro
+        fields = [
+            'id', 'etablissement', 'etablissement_nom', 'paiement',
+            'montant', 'date_debut', 'date_expiration', 'statut',
+            'created_at', 'facture'
+        ]
+
+

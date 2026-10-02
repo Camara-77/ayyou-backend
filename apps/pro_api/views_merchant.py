@@ -32,6 +32,23 @@ def get_merchant_etablissement(user) -> Etablissement:
     return etab
 
 
+def is_subscription_active(etablissement: Etablissement, user=None) -> bool:
+    """
+    Vérifie si l'établissement possède un abonnement PRO actif et non expiré.
+    Les comptes SuperAdmin sont exemptés.
+    """
+    if user and getattr(user, 'is_superuser', False):
+        return True
+    if not etablissement:
+        return False
+    if etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF:
+        return False
+    if not etablissement.date_expiration_abonnement or etablissement.date_expiration_abonnement <= timezone.now():
+        return False
+    return True
+
+
+
 class MerchantProfileView(APIView):
     """
     GET /api/pro/merchant/profile/
@@ -91,6 +108,12 @@ class MerchantProductListView(APIView):
 
     def post(self, request):
         etablissement = get_merchant_etablissement(request.user)
+        if not is_subscription_active(etablissement, request.user):
+            return Response(
+                {"detail": "Votre abonnement PRO est expiré. Veuillez le renouveler pour ajouter des produits au menu."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = MerchantProduitSerializer(data=request.data)
         if serializer.is_valid():
             produit = serializer.save(etablissement=etablissement)
@@ -123,6 +146,12 @@ class MerchantProductDetailView(APIView):
 
     def put(self, request, pk):
         produit = self.get_object(request, pk)
+        if not is_subscription_active(produit.etablissement, request.user):
+            return Response(
+                {"detail": "Votre abonnement PRO est expiré. Veuillez le renouveler pour modifier votre menu."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = MerchantProduitSerializer(produit, data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -131,6 +160,12 @@ class MerchantProductDetailView(APIView):
 
     def patch(self, request, pk):
         produit = self.get_object(request, pk)
+        if not is_subscription_active(produit.etablissement, request.user):
+            return Response(
+                {"detail": "Votre abonnement PRO est expiré. Veuillez le renouveler pour modifier votre menu."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = MerchantProduitSerializer(produit, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -139,6 +174,12 @@ class MerchantProductDetailView(APIView):
 
     def delete(self, request, pk):
         produit = self.get_object(request, pk)
+        if not is_subscription_active(produit.etablissement, request.user):
+            return Response(
+                {"detail": "Votre abonnement PRO est expiré. Veuillez le renouveler pour modifier votre menu."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         produit.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -152,9 +193,16 @@ class MerchantProductToggleView(APIView):
 
     def patch(self, request, pk):
         etablissement = get_merchant_etablissement(request.user)
+        if not is_subscription_active(etablissement, request.user):
+            return Response(
+                {"detail": "Votre abonnement PRO est expiré. Veuillez le renouveler pour modifier la disponibilité de vos produits."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         produit = get_object_or_404(Produit, pk=pk, etablissement=etablissement)
         produit.est_disponible = not produit.est_disponible
         produit.save(update_fields=['est_disponible', 'date_modification'])
+
 
         return Response({
             'id': produit.id,
@@ -348,7 +396,14 @@ class MerchantImageUploadView(APIView):
 
     def post(self, request):
         etablissement = get_merchant_etablissement(request.user)
+        if not is_subscription_active(etablissement, request.user):
+            return Response(
+                {"detail": "Votre abonnement PRO est expiré. Veuillez le renouveler pour téléverser des images."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         image_file = request.FILES.get('image_file') or request.FILES.get('file') or request.FILES.get('image')
+
 
         if not image_file:
             return Response(

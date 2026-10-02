@@ -190,6 +190,7 @@ class PublicationFeedSerializer(serializers.ModelSerializer):
     etablissement = EtablissementSimplifieSerializer(read_only=True)
     produit = ProduitListSerializer(read_only=True)
     is_liked = serializers.SerializerMethodField()
+    nombre_likes = serializers.SerializerMethodField()
 
     class Meta:
         model = PublicationFeed
@@ -209,6 +210,9 @@ class PublicationFeedSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'nombre_likes', 'nombre_partages', 'date_publication']
 
+    def get_nombre_likes(self, obj) -> int:
+        return LikeProduit.objects.filter(publication=obj).count()
+
     def get_is_liked(self, obj) -> bool:
         request = self.context.get('request')
         if request and request.user and request.user.is_authenticated:
@@ -221,9 +225,12 @@ class LikeProduitSerializer(serializers.ModelSerializer):
     Serializer pour enregistrer ou retirer un Like client.
     Garantit l'association avec request.user sans impersonnalisation.
     """
+    produit_detail = ProduitListSerializer(source='produit', read_only=True)
+    publication_feed = PublicationFeedSerializer(source='publication', read_only=True)
+
     class Meta:
         model = LikeProduit
-        fields = ['id', 'utilisateur', 'produit', 'publication', 'date_creation']
+        fields = ['id', 'utilisateur', 'produit', 'publication', 'produit_detail', 'publication_feed', 'date_creation']
         read_only_fields = ['id', 'utilisateur', 'date_creation']
 
     def validate(self, attrs):

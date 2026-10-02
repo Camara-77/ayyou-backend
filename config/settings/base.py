@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'apps.pro_api',
     'apps.notifications',
     'apps.ai',
+    'apps.telemetry',
 ]
 
 # Custom User Model configuration
@@ -235,8 +236,11 @@ PAYTECH_IPN_URL = os.getenv('PAYTECH_IPN_URL', 'https://running-custody-neatness
 
 PAYTECH_SUCCESS_URL = os.getenv('PAYTECH_SUCCESS_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/success/')
 PAYTECH_CANCEL_URL = os.getenv('PAYTECH_CANCEL_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/cancel/')
-
-
+# Recommendation Engine Feature Flags
+RECOMMENDATION_MODE = os.getenv('RECOMMENDATION_MODE', 'chronological')
+SHADOW_RECOMMENDER_ENABLED = os.getenv('SHADOW_RECOMMENDER_ENABLED', 'True').lower() in ('true', '1', 't')
+RECOMMENDATION_EXPERIMENT_ENABLED = os.getenv('RECOMMENDATION_EXPERIMENT_ENABLED', 'False').lower() in ('true', '1', 't')
+RECOMMENDATION_EXPERIMENT_PERCENTAGE = int(os.getenv('RECOMMENDATION_EXPERIMENT_PERCENTAGE', '15'))
 
 
 # Logging Configuration (Protects against leaking sensitive data like passwords, tokens, OTP codes)

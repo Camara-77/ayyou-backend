@@ -75,15 +75,23 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
     def available(self, request):
         """
         GET /api/deliveries/available/
-        Retourne la liste des missions actuellement disponibles (non affectées).
-        Effectue une purge automatique préalable des attributions expirées (> 2 min).
+        Retourne la liste des missions actuellement proposées ou disponibles pour le livreur connecté :
+        - Phase 1 : Proposée uniquement au livreur le plus proche (livreur == profil_livreur).
+        - Phase 2 : Diffusée aux livreurs sélectionnés en Phase 2.
+        Purge automatiquement les attributions expirées (> 90 secondes).
         """
         DeliveryService.expire_expired_deliveries()
 
-        queryset = Livraison.objects.filter(
-            livreur__isnull=True,
+        profil_livreur = getattr(request.user, 'profil_livreur', None)
+        if not profil_livreur:
+            return Response([], status=status.HTTP_200_OK)
+
+        driver_id = profil_livreur.id
+
+        base_qs = Livraison.objects.filter(
             statut__in=[
                 Livraison.STATUT_EN_ATTENTE,
+                Livraison.STATUT_AFFECTEE,
                 Livraison.STATUT_EN_PREPARATION,
                 Livraison.STATUT_PRETE
             ]
@@ -95,6 +103,23 @@ class LivraisonViewSet(viewsets.ReadOnlyModelViewSet):
             'commande__sous_commandes__lignes'
         )
 
+        visible_ids = []
+        for liv in base_qs:
+            props = liv.propositions_livreurs or {}
+            refuses = props.get('refuses', [])
+            expires = props.get('expires', [])
+            if driver_id in refuses or driver_id in expires:
+                continue
+
+            if liv.phase_attribution == 1:
+                if liv.livreur_id == driver_id:
+                    visible_ids.append(liv.id)
+            elif liv.phase_attribution == 2:
+                p2_ids = props.get('phase_2', [])
+                if not p2_ids or driver_id in p2_ids:
+                    visible_ids.append(liv.id)
+
+        queryset = base_qs.filter(id__in=visible_ids)
         serializer = LivraisonSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
