@@ -109,7 +109,8 @@ class EmailNotificationService:
             logger.warning(f"[EMAIL SERVICE] Impossible d'envoyer l'email d'approbation : Etablissement #{etablissement.id} sans propriétaire.")
             return None
 
-        frontend_base = os.getenv('FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        prenom = proprietaire.prenom or proprietaire.get_full_name() or etablissement.nom
+        frontend_base = os.getenv('AYYOU_PRO_URL', os.getenv('FRONTEND_URL', 'http://localhost:4200')).rstrip('/')
         if etablissement.type_etablissement == Etablissement.TYPE_VENDEUR:
             type_label = "Vendeur à domicile"
             login_url = f"{frontend_base}/vendeur/login"
@@ -117,15 +118,15 @@ class EmailNotificationService:
             type_label = "Restaurant"
             login_url = f"{frontend_base}/pro/login"
 
-        titre = f"Félicitations ! Votre compte {type_label} AYYOU a été validé"
+        titre = "Bienvenue chez AYYOU — Votre candidature est acceptée"
         message = (
-            f"Bonjour {etablissement.nom},\n\n"
-            f"Nous avons le plaisir de vous informer que votre compte {type_label} « {etablissement.nom} » "
-            f"a été vérifié et validé avec succès par l'équipe AYYOU.\n\n"
-            f"Vous pouvez dès à présent vous connecter à votre espace professionnel pour gérer vos produits, "
-            f"vos commandes et votre établissement :\n"
+            f"Bonjour {prenom},\n\n"
+            f"Nous avons le plaisir de vous annoncer que votre candidature pour l'établissement « {etablissement.nom} » ({type_label}) a été acceptée.\n\n"
+            f"Bienvenue dans la grande famille AYYOU.\n\n"
+            f"Vous pouvez maintenant accéder à votre espace professionnel avec l'adresse email et le mot de passe utilisés lors de votre inscription :\n"
             f"{login_url}\n\n"
-            f"Merci de votre confiance et bienvenue dans le réseau AYYOU !"
+            f"Cordialement,\n"
+            f"L'équipe AYYOU"
         )
 
         notification = Notification.objects.create(
@@ -159,17 +160,19 @@ class EmailNotificationService:
             logger.warning(f"[EMAIL SERVICE] Impossible d'envoyer l'email de refus : Etablissement #{etablissement.id} sans propriétaire.")
             return None
 
-        type_label = "Vendeur à domicile" if etablissement.type_etablissement == Etablissement.TYPE_VENDEUR else "Restaurant"
+        prenom = proprietaire.prenom or proprietaire.get_full_name() or etablissement.nom
         motif_clean = (motif or 'Dossier non conforme').strip()
 
-        titre = f"Information concernant votre demande de compte {type_label} AYYOU"
+        titre = "AYYOU — Mise à jour de votre candidature"
         message = (
-            f"Bonjour {etablissement.nom},\n\n"
-            f"Nous avons examiné la demande d'inscription pour votre établissement « {etablissement.nom} ».\n\n"
-            f"Malheureusement, votre dossier n'a pas pu être validé pour le motif suivant :\n"
-            f"« {motif_clean} »\n\n"
-            f"Vous pouvez vous connecter à votre espace pour mettre à jour vos pièces justificatives "
-            f"ou contacter le support partenaire AYYOU pour obtenir de l'aide."
+            f"Bonjour {prenom},\n\n"
+            f"Nous avons examiné votre dossier d'inscription pour l'établissement « {etablissement.nom} » à AYYOU.\n\n"
+            f"Après vérification, nous ne pouvons malheureusement pas valider votre candidature pour le moment.\n\n"
+            f"Motif :\n"
+            f"{motif_clean}\n\n"
+            f"Nous vous invitons à corriger les éléments concernés et à soumettre à nouveau les documents nécessaires.\n\n"
+            f"Cordialement,\n\n"
+            f"L'équipe AYYOU"
         )
 
         notification = Notification.objects.create(

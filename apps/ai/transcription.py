@@ -152,9 +152,14 @@ class TranscriptionService:
             if not transcribed_text:
                 try:
                     pipe = cls.get_pipeline()
+                    senegal_vocab_prompt = "thiéboudienne ceebu jën yassa mafé dibi domoda soupe kandia aloco bissap bouye attiéké pastels fataya lakhou sow"
                     result = pipe(
                         target_path,
-                        generate_kwargs={"task": "transcribe"}
+                        generate_kwargs={
+                            "task": "transcribe",
+                            "language": "french",
+                            "initial_prompt": senegal_vocab_prompt
+                        }
                     )
                     if isinstance(result, dict):
                         transcribed_text = result.get("text", "").strip()

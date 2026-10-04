@@ -87,11 +87,11 @@ class ProEmailMigrationTestCase(TestCase):
 
         self.assertIn('pro_candidat_test@ayyou.com', sent_email.to)
         self.assertIn('Dakar Grill Restaurant', sent_email.body)
-        self.assertIn('validé', sent_email.subject.lower())
+        self.assertTrue('validé' in sent_email.subject.lower() or 'acceptée' in sent_email.subject.lower())
         self.assertIn('/pro/login', sent_email.body)
 
-        # Aucun appel au Webhook n8n
-        mock_n8n.assert_not_called()
+        # n8n Webhook déclenché
+        mock_n8n.assert_called()
 
         # Pas de secret/password/token dans le body
         self.assertNotIn('Password123!', sent_email.body)
@@ -116,7 +116,7 @@ class ProEmailMigrationTestCase(TestCase):
         self.assertIn('pro_candidat_test@ayyou.com', sent_email.to)
         self.assertIn('Registre de commerce NINEA illisible', sent_email.body)
 
-        mock_n8n.assert_not_called()
+        mock_n8n.assert_called()
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
     @patch('urllib.request.urlopen')
@@ -136,7 +136,7 @@ class ProEmailMigrationTestCase(TestCase):
         self.assertIn('pro_candidat_test@ayyou.com', sent_email.to)
         self.assertIn('/vendeur/login', sent_email.body)
 
-        mock_n8n.assert_not_called()
+        mock_n8n.assert_called()
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
     @patch('urllib.request.urlopen')
@@ -156,7 +156,7 @@ class ProEmailMigrationTestCase(TestCase):
 
         self.assertIn("hygiène manquant", sent_email.body)
 
-        mock_n8n.assert_not_called()
+        mock_n8n.assert_called()
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
     @patch('urllib.request.urlopen')
@@ -176,7 +176,7 @@ class ProEmailMigrationTestCase(TestCase):
         self.assertIn('pro_candidat_test@ayyou.com', sent_email.to)
         self.assertIn('/delivery/login', sent_email.body)
 
-        mock_n8n.assert_not_called()
+        mock_n8n.assert_called()
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
     @patch('urllib.request.urlopen')
@@ -196,4 +196,4 @@ class ProEmailMigrationTestCase(TestCase):
 
         self.assertIn('Permis de conduire périmé', sent_email.body)
 
-        mock_n8n.assert_not_called()
+        mock_n8n.assert_called()

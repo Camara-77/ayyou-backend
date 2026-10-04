@@ -161,12 +161,16 @@ class SousCommandeSerializer(serializers.ModelSerializer):
     """
     etablissement_nom = serializers.CharField(source='etablissement.nom', read_only=True)
     etablissement_logo = serializers.CharField(source='etablissement.logo_url', read_only=True)
+    etablissement_adresse = serializers.CharField(source='etablissement.adresse', read_only=True)
+    etablissement_specialite = serializers.CharField(source='etablissement.specialite', read_only=True)
+    etablissement_statut = serializers.CharField(source='etablissement.statut', read_only=True)
     lignes = LigneCommandeSerializer(many=True, read_only=True)
 
     class Meta:
         model = SousCommande
         fields = [
             'id', 'etablissement', 'etablissement_nom', 'etablissement_logo',
+            'etablissement_adresse', 'etablissement_specialite', 'etablissement_statut',
             'statut', 'sous_total', 'frais_livraison', 'total', 'lignes'
         ]
 

@@ -198,7 +198,7 @@ class LoginService:
             pro_status = "NONE"
 
         return {
-            "message": _("Connexion réussie."),
+            "message": str(_("Connexion réussie.")),
             "access": str(refresh.access_token),
             "refresh": str(refresh),
             "utilisateur": {

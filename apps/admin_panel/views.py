@@ -115,6 +115,9 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+from apps.ai.document_verification_service import DocumentVerificationAIService
+
+
 class AdminBusinessViewSet(viewsets.ModelViewSet):
     """Gère les établissements et leurs demandes de vérification."""
     permission_classes = [IsSuperAdmin]
@@ -139,6 +142,57 @@ class AdminBusinessViewSet(viewsets.ModelViewSet):
         if statut_verif:
             qs = qs.filter(statut_verification__iexact=statut_verif)
         return qs
+
+    @action(detail=True, methods=['post'], url_path='analyze-documents')
+    def analyze_documents(self, request, pk=None):
+        """
+        Déclenche l'analyse intelligente AYYOU Copilot du dossier administratif (Documents + Photos + Inscription).
+        Cette action est réservée au Super Admin et ne modifie pas automatiquement la décision métier.
+        """
+        etablissement = self.get_object()
+        
+        analysis_report = DocumentVerificationAIService.analyze_establishment_dossier(etablissement)
+        
+        AdminAuditService.log_action(
+            request=request,
+            action="ANALYZE_BUSINESS_DOCUMENTS",
+            ressource="Etablissement",
+            resource_id=etablissement.id,
+            details={
+                'nom': etablissement.nom,
+                'decision_recommandee': analysis_report.get('decision'),
+                'inconsistencies_count': len(analysis_report.get('inconsistencies', []))
+            }
+        )
+
+        return Response(analysis_report, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='resend-email')
+    def resend_email(self, request, pk=None):
+        """
+        Renvoie manuellement l'email d'acceptation ou de refus selon le statut actuel de l'établissement.
+        """
+        etablissement = self.get_object()
+        motif = request.data.get('motif', '')
+
+        if etablissement.statut_verification == Etablissement.STATUT_VALIDE:
+            notification = EmailNotificationService.send_pro_approval_email_for_etablissement(etablissement)
+            msg = "Email de confirmation renvoyé avec succès."
+        elif etablissement.statut_verification == Etablissement.STATUT_REFUSE:
+            notification = EmailNotificationService.send_pro_rejection_email_for_etablissement(etablissement, motif)
+            msg = "Email de refus renvoyé avec succès."
+        else:
+            return Response({'error': "Aucun email ne peut être renvoyé pour un dossier en attente."}, status=status.HTTP_400_BAD_REQUEST)
+
+        AdminAuditService.log_action(
+            request=request,
+            action="RESEND_BUSINESS_EMAIL",
+            ressource="Etablissement",
+            resource_id=etablissement.id,
+            details={'nom': etablissement.nom, 'statut': etablissement.statut_verification}
+        )
+
+        return Response({'status': 'success', 'message': msg, 'notification_id': notification.id if notification else None}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['patch'], url_path='approve')
     @transaction.atomic
@@ -226,6 +280,57 @@ class AdminDriverViewSet(viewsets.ModelViewSet):
         if type_veh:
             qs = qs.filter(type_vehicule__iexact=type_veh)
         return qs
+
+    @action(detail=True, methods=['post'], url_path='analyze-documents')
+    def analyze_documents(self, request, pk=None):
+        """
+        Analyse automatique par AYYOU Copilot les documents, photos et métadonnées du livreur.
+        Cette action est réservée au Super Admin et ne modifie pas automatiquement la décision métier.
+        """
+        driver = self.get_object()
+        
+        analysis_report = DocumentVerificationAIService.analyze_driver_dossier(driver)
+        
+        AdminAuditService.log_action(
+            request=request,
+            action="ANALYZE_DRIVER_DOCUMENTS",
+            ressource="ProfilLivreur",
+            resource_id=driver.id,
+            details={
+                'driver_name': driver.utilisateur.get_full_name(),
+                'decision_recommandee': analysis_report.get('decision'),
+                'inconsistencies_count': len(analysis_report.get('inconsistencies', []))
+            }
+        )
+
+        return Response(analysis_report, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='resend-email')
+    def resend_email(self, request, pk=None):
+        """
+        Renvoie manuellement l'email d'acceptation ou de refus selon le statut actuel du livreur.
+        """
+        driver = self.get_object()
+        motif = request.data.get('motif', '')
+
+        if driver.statut_verification == ProfilLivreur.STATUT_VALIDE:
+            notification = EmailNotificationService.send_pro_approval_email_for_driver(driver)
+            msg = "Email de confirmation renvoyé avec succès."
+        elif driver.statut_verification == ProfilLivreur.STATUT_REFUSE:
+            notification = EmailNotificationService.send_pro_rejection_email_for_driver(driver, motif)
+            msg = "Email de refus renvoyé avec succès."
+        else:
+            return Response({'error': "Aucun email ne peut être renvoyé pour un dossier en attente."}, status=status.HTTP_400_BAD_REQUEST)
+
+        AdminAuditService.log_action(
+            request=request,
+            action="RESEND_DRIVER_EMAIL",
+            ressource="ProfilLivreur",
+            resource_id=driver.id,
+            details={'driver_name': driver.utilisateur.get_full_name(), 'statut': driver.statut_verification}
+        )
+
+        return Response({'status': 'success', 'message': msg, 'notification_id': notification.id if notification else None}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['patch'], url_path='approve')
     @transaction.atomic

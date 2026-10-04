@@ -419,3 +419,39 @@ class LikeProduit(models.Model):
     def __str__(self):
         cible = self.produit.nom if self.produit else f"Post {self.publication_id}"
         return f"Like de {self.utilisateur.get_full_name()} sur {cible}"
+
+
+class AbonnementEtablissement(models.Model):
+    """
+    Table de suivi des abonnements des clients aux établissements (Restaurants & Vendeurs).
+    Modèle inspiré des réseaux sociaux (type TikTok / Instagram) permettant de suivre un établissement.
+    """
+    id = models.BigAutoField(primary_key=True)
+    utilisateur = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name='abonnements_etablissements',
+        verbose_name=_('utilisateur')
+    )
+    etablissement = models.ForeignKey(
+        Etablissement,
+        on_delete=models.CASCADE,
+        related_name='abonnes',
+        verbose_name=_('établissement')
+    )
+    date_creation = models.DateTimeField(_('date de création'), auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('Abonnement Établissement')
+        verbose_name_plural = _('Abonnements Établissements')
+        ordering = ['-date_creation']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['utilisateur', 'etablissement'],
+                name='unique_abonnement_utilisateur_etablissement'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.utilisateur.get_full_name()} s'est abonné(e) à {self.etablissement.nom}"
+

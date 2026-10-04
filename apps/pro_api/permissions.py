@@ -7,7 +7,7 @@ class IsApprovedMerchant(permissions.BasePermission):
     Permission DRF exigeant :
     1. Utilisateur authentifié et actif (est_actif=True).
     2. Rôle RESTAURANT ou VENDEUR.
-    3. Au moins un Établissement dont statut_verification est 'VALIDE'.
+    3. Au moins un Établissement (statut VALIDE ou essai/abonnement ACTIF non expiré).
     """
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated and request.user.est_actif):
@@ -20,8 +20,13 @@ class IsApprovedMerchant(permissions.BasePermission):
             return False
 
         from apps.catalog.models import Etablissement
+        from django.utils import timezone
+        from django.db.models import Q
+        now = timezone.now()
+
         return request.user.etablissements.filter(
-            statut_verification=Etablissement.STATUT_VALIDE
+            Q(statut_verification=Etablissement.STATUT_VALIDE) |
+            (Q(statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF) & Q(date_expiration_abonnement__gt=now))
         ).exists()
 
 
@@ -30,7 +35,7 @@ class IsApprovedRestaurant(permissions.BasePermission):
     Permission DRF exigeant :
     1. Utilisateur authentifié et actif.
     2. Rôle RESTAURANT.
-    3. Établissement de type RESTAURANT validé.
+    3. Établissement de type RESTAURANT (VALIDE ou abonnement/essai ACTIF non expiré).
     """
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated and request.user.est_actif):
@@ -41,9 +46,14 @@ class IsApprovedRestaurant(permissions.BasePermission):
             return False
 
         from apps.catalog.models import Etablissement
+        from django.utils import timezone
+        from django.db.models import Q
+        now = timezone.now()
+
         return request.user.etablissements.filter(
-            type_etablissement=Etablissement.TYPE_RESTAURANT,
-            statut_verification=Etablissement.STATUT_VALIDE
+            Q(type_etablissement=Etablissement.TYPE_RESTAURANT) &
+            (Q(statut_verification=Etablissement.STATUT_VALIDE) |
+             (Q(statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF) & Q(date_expiration_abonnement__gt=now)))
         ).exists()
 
 
@@ -52,7 +62,7 @@ class IsApprovedVendeur(permissions.BasePermission):
     Permission DRF exigeant :
     1. Utilisateur authentifié et actif.
     2. Rôle VENDEUR.
-    3. Établissement de type VENDEUR validé.
+    3. Établissement de type VENDEUR (VALIDE ou abonnement/essai ACTIF non expiré).
     """
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated and request.user.est_actif):
@@ -63,9 +73,14 @@ class IsApprovedVendeur(permissions.BasePermission):
             return False
 
         from apps.catalog.models import Etablissement
+        from django.utils import timezone
+        from django.db.models import Q
+        now = timezone.now()
+
         return request.user.etablissements.filter(
-            type_etablissement=Etablissement.TYPE_VENDEUR,
-            statut_verification=Etablissement.STATUT_VALIDE
+            Q(type_etablissement=Etablissement.TYPE_VENDEUR) &
+            (Q(statut_verification=Etablissement.STATUT_VALIDE) |
+             (Q(statut_abonnement=Etablissement.STATUT_ABONNEMENT_ACTIF) & Q(date_expiration_abonnement__gt=now)))
         ).exists()
 
 

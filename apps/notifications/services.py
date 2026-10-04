@@ -90,3 +90,121 @@ class NotificationService:
                 updated_at=now
             )
         return count
+
+    @classmethod
+    def traiter_rappels_repas_planifies(cls, utilisateur: Optional[Utilisateur] = None) -> int:
+        """
+        Scanne les repas planifiés actifs (statut='PLANIFIE') et génère de manière idempotente
+        les notifications de rappel In-App T-30 min, T-20 min et T-5 min.
+        """
+        from apps.orders.models import RepasPlanifie
+        import datetime
+
+        now = timezone.now()
+        today = now.date()
+
+        qs = RepasPlanifie.objects.filter(
+            statut=RepasPlanifie.STATUT_PLANIFIE,
+            date_planifiee__gte=today - datetime.timedelta(days=1),
+            date_planifiee__lte=today + datetime.timedelta(days=1)
+        ).select_related('utilisateur', 'produit', 'etablissement')
+
+        if utilisateur:
+            qs = qs.filter(utilisateur=utilisateur)
+
+        notifs_creees = 0
+
+        for meal in qs:
+            if meal.heure_planifiee:
+                meal_time = meal.heure_planifiee
+            else:
+                if meal.creneau == RepasPlanifie.CRENEAU_MATIN:
+                    meal_time = datetime.time(8, 0)
+                elif meal.creneau == RepasPlanifie.CRENEAU_SOIR:
+                    meal_time = datetime.time(19, 30)
+                elif meal.creneau == RepasPlanifie.CRENEAU_EN_CAS:
+                    meal_time = datetime.time(16, 0)
+                else:
+                    meal_time = datetime.time(12, 30)
+
+            dt_naive = datetime.datetime.combine(meal.date_planifiee, meal_time)
+
+            if timezone.is_naive(dt_naive):
+                meal_dt = timezone.make_aware(dt_naive, timezone.get_current_timezone())
+            else:
+                meal_dt = dt_naive
+
+            if now > meal_dt + datetime.timedelta(minutes=30):
+                continue
+
+            heure_formatee = meal_time.strftime('%H:%M')
+            prod_name = meal.produit.nom if meal.produit else "votre plat"
+            resto_name = meal.etablissement.nom if meal.etablissement else "le restaurant"
+
+            reminders_config = [
+                {
+                    'key': 'T-30',
+                    'trigger_dt': meal_dt - datetime.timedelta(minutes=30),
+                    'message': f"Votre repas '{prod_name}' de chez {resto_name} est prévu dans 30 minutes (à {heure_formatee})."
+                },
+                {
+                    'key': 'T-20',
+                    'trigger_dt': meal_dt - datetime.timedelta(minutes=20),
+                    'message': f"Votre repas '{prod_name}' est prévu dans 20 minutes (à {heure_formatee})."
+                },
+                {
+                    'key': 'T-5',
+                    'trigger_dt': meal_dt - datetime.timedelta(minutes=5),
+                    'message': f"Votre repas '{prod_name}' est prévu dans 5 minutes (à {heure_formatee})."
+                },
+            ]
+
+            for rem in reminders_config:
+                trigger_dt = rem['trigger_dt']
+
+                if now >= trigger_dt and now <= meal_dt + datetime.timedelta(minutes=30):
+                    already_sent = Notification.objects.filter(
+                        utilisateur=meal.utilisateur,
+                        type_notification=Notification.TYPE_RAPPEL_REPAS_PLANIFIE,
+                        reference_type='RepasPlanifie',
+                        reference_id=str(meal.id),
+                        metadata__reminder_type=rem['key']
+                    ).exists()
+
+                    if not already_sent:
+                        cls.creer_notification(
+                            utilisateur=meal.utilisateur,
+                            titre="Repas planifié",
+                            message=rem['message'],
+                            type_notification=Notification.TYPE_RAPPEL_REPAS_PLANIFIE,
+                            canal=Notification.CANAL_IN_APP,
+                            reference_type='RepasPlanifie',
+                            reference_id=str(meal.id),
+                            metadata={
+                                'planning_id': meal.id,
+                                'reminder_type': rem['key'],
+                                'date_planifiee': str(meal.date_planifiee),
+                                'heure_planifiee': heure_formatee
+                            }
+                        )
+                        notifs_creees += 1
+
+                        # Expédition Web Push PWA complémentaire (avec vérification des préférences & Deep Link)
+                        try:
+                            from apps.notifications.webpush_service import WebPushService
+                            WebPushService.send_push_to_user(
+                                utilisateur_id=meal.utilisateur_id,
+                                titre="Repas planifié AYYOU",
+                                message=rem['message'],
+                                url=f"/planning/detail/{meal.id}",
+                                category="PLANNING",
+                                data={
+                                    "url": f"/planning/detail/{meal.id}",
+                                    "planning_id": meal.id,
+                                    "reminder_type": rem['key']
+                                }
+                            )
+                        except Exception as push_err:
+                            logger.warning(f"[PUSH ERROR] Échec Push Rappel Planning #{meal.id}: {push_err}")
+
+        return notifs_creees

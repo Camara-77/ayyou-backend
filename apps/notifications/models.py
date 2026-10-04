@@ -17,6 +17,8 @@ class Notification(models.Model):
     TYPE_PRO_VALIDATION = 'PRO_VALIDATION'
     TYPE_SUBSCRIPTION = 'SUBSCRIPTION'
     TYPE_SYSTEM = 'SYSTEM'
+    TYPE_RAPPEL_REPAS_PLANIFIE = 'RAPPEL_REPAS_PLANIFIE'
+    TYPE_PUBLICATION_VIDEO = 'PUBLICATION_VIDEO'
 
     CHOIX_TYPES_NOTIFICATION = [
         (TYPE_AUTHENTICATION, _('Authentification / OTP')),
@@ -25,6 +27,8 @@ class Notification(models.Model):
         (TYPE_PRO_VALIDATION, _('Validation PRO')),
         (TYPE_SUBSCRIPTION, _('Abonnement PRO')),
         (TYPE_SYSTEM, _('Système')),
+        (TYPE_RAPPEL_REPAS_PLANIFIE, _('Rappel Repas Planifié')),
+        (TYPE_PUBLICATION_VIDEO, _('Publication Vidéo')),
     ]
 
     # Canaux de diffusion
@@ -115,3 +119,64 @@ class Notification(models.Model):
     def __str__(self):
         statut_str = "Lue" if self.est_lu else "Non lue"
         return f"[{self.get_canal_display()}] {self.titre} -> {self.utilisateur.get_full_name()} ({statut_str})"
+
+
+class PushSubscription(models.Model):
+    """
+    Stocke les abonnements Web Push PWA (VAPID) par utilisateur et par appareil.
+    Un utilisateur peut posséder plusieurs appareils/navigateurs enregistrés.
+    """
+    id = models.BigAutoField(primary_key=True)
+    utilisateur = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name='push_subscriptions',
+        verbose_name=_('utilisateur')
+    )
+    endpoint = models.CharField(_('endpoint push VAPID'), max_length=500, db_index=True)
+    p256dh = models.CharField(_('clé publique p256dh'), max_length=255)
+    auth = models.CharField(_('secret auth'), max_length=255)
+    user_agent = models.CharField(_('agent utilisateur / navigateur'), max_length=255, blank=True, default='')
+    is_active = models.BooleanField(_('est actif'), default=True, db_index=True)
+
+    created_at = models.DateTimeField(_('date de création'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('date de modification'), auto_now=True)
+
+    class Meta:
+        verbose_name = _('Abonnement Web Push')
+        verbose_name_plural = _('Abonnements Web Push')
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['utilisateur', 'endpoint'], name='unique_push_subscription_endpoint')
+        ]
+
+    def __str__(self):
+        return f"Push VAPID #{self.id} - {self.utilisateur.get_full_name()} ({'Actif' if self.is_active else 'Inactif'})"
+
+
+class PushNotificationPreference(models.Model):
+    """
+    Préférences de l'utilisateur pour la réception des notifications Web Push.
+    [ON/OFF] Rappels de repas planifiés (T-30, T-20, T-5).
+    [ON/OFF] Nouvelles vidéos de mes abonnements aux établissements.
+    """
+    id = models.BigAutoField(primary_key=True)
+    utilisateur = models.OneToOneField(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name='push_preferences',
+        verbose_name=_('utilisateur')
+    )
+    push_rappels_planning = models.BooleanField(_('push rappels planning repas'), default=True)
+    push_publications_video = models.BooleanField(_('push publications vidéos abonnements'), default=True)
+
+    created_at = models.DateTimeField(_('date de création'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('date de modification'), auto_now=True)
+
+    class Meta:
+        verbose_name = _('Préférences Notifications Push')
+        verbose_name_plural = _('Préférences Notifications Push')
+
+    def __str__(self):
+        return f"Préférences Push de {self.utilisateur.get_full_name()} (Planning: {self.push_rappels_planning}, Vidéos: {self.push_publications_video})"
+

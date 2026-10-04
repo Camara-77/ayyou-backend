@@ -28,7 +28,10 @@ def get_merchant_etablissement(user) -> Etablissement:
     """
     etab = Etablissement.objects.filter(proprietaire=user, statut_verification=Etablissement.STATUT_VALIDE).first()
     if not etab:
-        etab = get_object_or_404(Etablissement, proprietaire=user)
+        etab = Etablissement.objects.filter(proprietaire=user).first()
+    if not etab:
+        from django.http import Http404
+        raise Http404("Aucun établissement trouvé pour cet utilisateur professionnel.")
     return etab
 
 

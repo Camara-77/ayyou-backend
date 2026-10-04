@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'apps.notifications',
     'apps.ai',
     'apps.telemetry',
+    'apps.recommendations',
 ]
 
 # Custom User Model configuration
@@ -182,6 +183,8 @@ SIMPLE_JWT = {
 }
 
 # CORS Configuration
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     origin.strip() for origin in os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:4200,http://127.0.0.1:4200').split(',') if origin.strip()
 ]
@@ -236,12 +239,6 @@ PAYTECH_IPN_URL = os.getenv('PAYTECH_IPN_URL', 'https://running-custody-neatness
 
 PAYTECH_SUCCESS_URL = os.getenv('PAYTECH_SUCCESS_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/success/')
 PAYTECH_CANCEL_URL = os.getenv('PAYTECH_CANCEL_URL', 'https://running-custody-neatness.ngrok-free.dev/api/payments/paytech/cancel/')
-# Recommendation Engine Feature Flags
-RECOMMENDATION_MODE = os.getenv('RECOMMENDATION_MODE', 'chronological')
-SHADOW_RECOMMENDER_ENABLED = os.getenv('SHADOW_RECOMMENDER_ENABLED', 'True').lower() in ('true', '1', 't')
-RECOMMENDATION_EXPERIMENT_ENABLED = os.getenv('RECOMMENDATION_EXPERIMENT_ENABLED', 'False').lower() in ('true', '1', 't')
-RECOMMENDATION_EXPERIMENT_PERCENTAGE = int(os.getenv('RECOMMENDATION_EXPERIMENT_PERCENTAGE', '15'))
-
 
 # Logging Configuration (Protects against leaking sensitive data like passwords, tokens, OTP codes)
 LOGGING = {

@@ -93,17 +93,38 @@ class PaymentService:
                 utilisateur=commande.utilisateur,
                 reference_type='Commande',
                 reference_id=notif_ref,
-                titre="Paiement confirmé"
+                type_notification='ORDER'
             ).exists()
 
             if not deja_notifie:
+                code_pin = None
+                if hasattr(commande, 'livraison') and commande.livraison and commande.livraison.code_validation:
+                    code_pin = commande.livraison.code_validation
+
+                nom_plat = "Commande AYYOU"
+                if commande.sous_commandes.exists():
+                    sc = commande.sous_commandes.first()
+                    if sc.lignes.exists():
+                        first_ligne = sc.lignes.first()
+                        nom_plat = first_ligne.nom_produit_snapshot or (first_ligne.produit.nom if first_ligne.produit else "Commande AYYOU")
+
+                montant_fmt = f"{int(commande.total):,} FCFA".replace(',', ' ')
+
                 Notification.objects.create(
                     utilisateur=commande.utilisateur,
-                    titre="Paiement confirmé",
-                    message=f"Votre paiement pour la commande #{commande.numero_commande} a été confirmé.",
+                    titre="Facture disponible",
+                    message=f"Commande {nom_plat} payée — {montant_fmt}",
                     type_notification='ORDER',
                     reference_type='Commande',
-                    reference_id=notif_ref
+                    reference_id=notif_ref,
+                    metadata={
+                        'commande_id': commande.id,
+                        'numero_commande': commande.numero_commande,
+                        'montant': float(commande.total),
+                        'montant_formate': montant_fmt,
+                        'nom_plat': nom_plat,
+                        'code_pin': code_pin
+                    }
                 )
 
         return paiement

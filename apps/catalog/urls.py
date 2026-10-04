@@ -8,7 +8,9 @@ from .views import (
     PublicationFeedListView,
     PublicationFeedDetailView,
     LikeProduitView,
-    LikeProduitDetailView
+    LikeProduitDetailView,
+    AbonnementListView,
+    AbonnementDetailView
 )
 
 app_name = 'catalog'
@@ -32,4 +34,8 @@ urlpatterns = [
     # Likes client
     path('likes/', LikeProduitView.as_view(), name='like-list-create-delete'),
     path('likes/<int:pk>/', LikeProduitDetailView.as_view(), name='like-detail'),
+
+    # Abonnements client
+    path('subscriptions/', AbonnementListView.as_view(), name='subscription-list-create-delete'),
+    path('subscriptions/<int:pk>/', AbonnementDetailView.as_view(), name='subscription-detail'),
 ]

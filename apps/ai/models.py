@@ -115,3 +115,79 @@ class AIChatQuota(models.Model):
         if hours > 0:
             return f"{hours}h {minutes}min" if minutes > 0 else f"{hours}h"
         return f"{minutes}min" if minutes > 0 else "moins d'une minute"
+
+
+class AIConversation(models.Model):
+    """
+    Fil de conversation persistant avec l'assistant IA Alimentaire AYYOU.
+    """
+    utilisateur = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='ai_conversations'
+    )
+    session_key = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    titre = models.CharField(max_length=255, default="Nouvelle conversation")
+    context_data = models.JSONField(default=dict, blank=True)
+    date_creation = models.DateTimeField(auto_now_add=True)
+    date_modification = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Conversation IA"
+        verbose_name_plural = "Conversations IA"
+        ordering = ['-date_modification']
+
+    def __str__(self):
+        user_label = self.utilisateur.get_full_name() if self.utilisateur else (self.session_key or "Anonyme")
+        return f"Conversation #{self.id} ({user_label}) - {self.titre}"
+
+
+class AIMessage(models.Model):
+    """
+    Message individuel au sein d'une conversation avec l'assistant IA AYYOU.
+    """
+    ROLE_USER = 'USER'
+    ROLE_ASSISTANT = 'ASSISTANT'
+    ROLE_SYSTEM = 'SYSTEM'
+
+    CHOIX_ROLES = [
+        (ROLE_USER, 'Utilisateur'),
+        (ROLE_ASSISTANT, 'Assistant'),
+        (ROLE_SYSTEM, 'Système'),
+    ]
+
+    TYPE_TEXT = 'TEXT'
+    TYPE_IMAGE = 'IMAGE'
+    TYPE_ACTION = 'ACTION'
+    TYPE_PLANNING = 'PLANNING'
+
+    CHOIX_TYPES = [
+        (TYPE_TEXT, 'Texte'),
+        (TYPE_IMAGE, 'Image'),
+        (TYPE_ACTION, 'Action'),
+        (TYPE_PLANNING, 'Planning'),
+    ]
+
+    conversation = models.ForeignKey(
+        AIConversation,
+        on_delete=models.CASCADE,
+        related_name='messages'
+    )
+    role = models.CharField(max_length=20, choices=CHOIX_ROLES, default=ROLE_USER)
+    type_message = models.CharField(max_length=20, choices=CHOIX_TYPES, default=TYPE_TEXT)
+    content = models.TextField(blank=True, default='')
+    user_text = models.TextField(blank=True, default='')
+    image_url = models.CharField(max_length=500, null=True, blank=True)
+    data_payload = models.JSONField(null=True, blank=True)
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Message IA"
+        verbose_name_plural = "Messages IA"
+        ordering = ['date_creation']
+
+    def __str__(self):
+        return f"Message #{self.id} [{self.role}] ({self.conversation_id})"
+

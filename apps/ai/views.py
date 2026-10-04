@@ -31,8 +31,9 @@ class AIChatView(APIView):
 
     def post(self, request):
         message = request.data.get('message', '').strip()
-        context = request.data.get('context', {})
-        history = request.data.get('history', [])
+        confirm_action = request.data.get('confirm_action', False)
+        if not message and confirm_action:
+            message = "Oui, confirme"
 
         if not message:
             return Response(
@@ -43,6 +44,9 @@ class AIChatView(APIView):
         user_name = "Client"
         if request.user and request.user.is_authenticated:
             user_name = getattr(request.user, 'prenom', None) or getattr(request.user, 'nom', None) or "Client"
+
+        context = request.data.get('context', {})
+        history = request.data.get('history', [])
 
         response_data = AIService.process_chat_message(
             message=message,

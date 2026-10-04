@@ -444,3 +444,102 @@ class AdresseLivraison(models.Model):
 
     def __str__(self):
         return f"{self.titre} - {self.adresse} ({self.utilisateur.get_full_name()})"
+
+
+class RepasPlanifie(models.Model):
+    """
+    Repas planifié par un Client AYYOU dans son planning personnel.
+    """
+    CRENEAU_MATIN = 'MATIN'
+    CRENEAU_MIDI = 'MIDI'
+    CRENEAU_SOIR = 'SOIR'
+    CRENEAU_EN_CAS = 'EN_CAS'
+
+    CHOIX_CRENEAUX = [
+        (CRENEAU_MATIN, _('Petit-déjeuner')),
+        (CRENEAU_MIDI, _('Déjeuner')),
+        (CRENEAU_SOIR, _('Dîner')),
+        (CRENEAU_EN_CAS, _('En-cas / Collation')),
+    ]
+
+    STATUT_PLANIFIE = 'PLANIFIE'
+    STATUT_COMMANDE = 'COMMANDE'
+    STATUT_ANNULE = 'ANNULE'
+
+    CHOIX_STATUTS = [
+        (STATUT_PLANIFIE, _('Planifié')),
+        (STATUT_COMMANDE, _('Commande créée')),
+        (STATUT_ANNULE, _('Annulé')),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    utilisateur = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name='repas_planifies',
+        verbose_name=_('client')
+    )
+    produit = models.ForeignKey(
+        Produit,
+        on_delete=models.CASCADE,
+        related_name='repas_planifies',
+        verbose_name=_('produit planifié')
+    )
+    etablissement = models.ForeignKey(
+        Etablissement,
+        on_delete=models.CASCADE,
+        related_name='repas_planifies',
+        verbose_name=_('établissement')
+    )
+    variante = models.ForeignKey(
+        VarianteProduit,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='repas_planifies',
+        verbose_name=_('variante choisie')
+    )
+    date_planifiee = models.DateField(_('date planifiée'), db_index=True)
+    heure_planifiee = models.TimeField(_('heure planifiée'), null=True, blank=True)
+    creneau = models.CharField(_('créneau du repas'), max_length=20, choices=CHOIX_CRENEAUX, default=CRENEAU_MIDI, db_index=True)
+    statut = models.CharField(_('statut'), max_length=30, choices=CHOIX_STATUTS, default=STATUT_PLANIFIE, db_index=True)
+    prix_total = models.DecimalField(_('prix total (FCFA)'), max_digits=10, decimal_places=2)
+    quantite = models.PositiveIntegerField(_('quantité'), default=1)
+    instructions = models.TextField(_('instructions spécifiques'), blank=True, default='')
+
+    rappel_valide = models.BooleanField(_('rappel validé'), default=False)
+    rappel_valide_at = models.DateTimeField(_('date de validation du rappel'), null=True, blank=True)
+    rappel_reporte = models.BooleanField(_('rappel reporté'), default=False)
+    rappel_reporte_at = models.DateTimeField(_('date de report du rappel'), null=True, blank=True)
+
+    date_creation = models.DateTimeField(_('date de création'), auto_now_add=True)
+    date_modification = models.DateTimeField(_('date de modification'), auto_now=True)
+
+    class Meta:
+        verbose_name = _('Repas Planifié')
+        verbose_name_plural = _('Repas Planifiés')
+        ordering = ['date_planifiee', 'creneau', 'id']
+        indexes = [
+            models.Index(fields=['utilisateur', 'date_planifiee']),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.quantite < 1:
+            raise ValidationError(_("La quantité doit être supérieure ou égale à 1."))
+        if self.prix_total < 0:
+            raise ValidationError(_("Le prix ne peut pas être négatif."))
+
+    def save(self, *args, **kwargs):
+        if self.produit and not self.etablissement_id:
+            self.etablissement = self.produit.etablissement
+        if self.produit and not self.prix_total:
+            prix = Decimal(str(self.produit.prix_base))
+            if self.variante:
+                prix += Decimal(str(self.variante.surcout_prix))
+            self.prix_total = prix * Decimal(str(self.quantite))
+        self.clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Repas '{self.produit.nom}' pour le {self.date_planifiee} ({self.get_creneau_display()}) - {self.utilisateur.get_full_name()}"

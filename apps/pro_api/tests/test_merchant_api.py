@@ -64,12 +64,15 @@ class MerchantAPITestCase(APITestCase):
             est_actif=True
         )
         UtilisateurRole.objects.create(utilisateur=self.user_pending, role=self.role_restaurant)
-        Etablissement.objects.create(
+        etab_pending = Etablissement.objects.create(
             nom="Chez Ousmane",
             type_etablissement=Etablissement.TYPE_RESTAURANT,
             proprietaire=self.user_pending,
             statut_verification=Etablissement.STATUT_EN_ATTENTE
         )
+        etab_pending.statut_abonnement = Etablissement.STATUT_ABONNEMENT_INACTIF
+        etab_pending.date_expiration_abonnement = None
+        etab_pending.save(update_fields=['statut_abonnement', 'date_expiration_abonnement'])
 
         # 4. Utilisateur Client standard
         self.user_client = Utilisateur.objects.create_user(

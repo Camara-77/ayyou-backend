@@ -198,3 +198,116 @@ class NotificationBackendTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['updated_count'], 2)
         self.assertEqual(NotificationService.get_nombre_non_lues(self.user_a), 0)
+
+    def test_12_creer_rappel_repas_planifie_t30_t20_t5(self):
+        """12. Génération automatique des rappels T-30, T-20 et T-5 pour un RepasPlanifie réel."""
+        from django.utils import timezone
+        import datetime
+        from apps.catalog.models import Categorie, Etablissement, Produit
+        from apps.orders.models import RepasPlanifie
+
+        cat = Categorie.objects.create(nom="Sénégalais", slug="senegalais")
+        resto = Etablissement.objects.create(nom="Resto Dakar", type_etablissement="RESTAURANT")
+        prod = Produit.objects.create(nom="Thiéboudienne", etablissement=resto, categorie=cat, prix_base=3500)
+
+        # Repas prévu dans 25 minutes (donc T-30 est dépassé -> rappel T-30 généré)
+        now = timezone.now()
+        meal_dt = now + datetime.timedelta(minutes=25)
+
+        meal = RepasPlanifie.objects.create(
+            utilisateur=self.user_a,
+            produit=prod,
+            etablissement=resto,
+            date_planifiee=meal_dt.date(),
+            heure_planifiee=meal_dt.time(),
+            creneau='MIDI',
+            statut=RepasPlanifie.STATUT_PLANIFIE,
+            prix_total=3500
+        )
+
+        # Exécuter le générateur de rappels
+        count = NotificationService.traiter_rappels_repas_planifies(self.user_a)
+        self.assertGreaterEqual(count, 1)
+
+        # Vérifier via l'API REST GET /api/notifications/
+        url_list = reverse('notifications:notification-list')
+        response = self.client_a.get(url_list)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data['results'] if 'results' in response.data else response.data
+        self.assertEqual(len(results), 1)
+
+        notif_data = results[0]
+        self.assertEqual(notif_data['type_notification'], Notification.TYPE_RAPPEL_REPAS_PLANIFIE)
+        self.assertEqual(notif_data['reference_type'], 'RepasPlanifie')
+        self.assertEqual(notif_data['reference_id'], str(meal.id))
+        self.assertIn("30 minutes", notif_data['message'])
+
+        # Vérifier le compteur non lu via GET /api/notifications/unread-count/
+        url_unread = reverse('notifications:notification-unread-count')
+        res_unread = self.client_a.get(url_unread)
+        self.assertEqual(res_unread.data['unread_count'], 1)
+
+    def test_13_idempotence_rappels_repas_planifies(self):
+        """13. Idempotence : un second passage du scheduler ne génère pas de doublon T-30."""
+        from django.utils import timezone
+        import datetime
+        from apps.catalog.models import Categorie, Etablissement, Produit
+        from apps.orders.models import RepasPlanifie
+
+        cat = Categorie.objects.create(nom="Burgers", slug="burgers")
+        resto = Etablissement.objects.create(nom="Snack Teranga")
+        prod = Produit.objects.create(nom="Cheeseburger", etablissement=resto, categorie=cat, prix_base=2500)
+
+        now = timezone.now()
+        meal_dt = now + datetime.timedelta(minutes=25)
+
+        meal = RepasPlanifie.objects.create(
+            utilisateur=self.user_a,
+            produit=prod,
+            etablissement=resto,
+            date_planifiee=meal_dt.date(),
+            heure_planifiee=meal_dt.time(),
+            creneau='MIDI',
+            statut=RepasPlanifie.STATUT_PLANIFIE,
+            prix_total=2500
+        )
+
+        first_count = NotificationService.traiter_rappels_repas_planifies(self.user_a)
+        self.assertEqual(first_count, 1)
+
+        # Deuxième passage immédiat
+        second_count = NotificationService.traiter_rappels_repas_planifies(self.user_a)
+        self.assertEqual(second_count, 0)
+
+        # Total des notifications = 1
+        total_notifs = Notification.objects.filter(utilisateur=self.user_a, reference_id=str(meal.id)).count()
+        self.assertEqual(total_notifs, 1)
+
+    def test_14_repas_planifie_annule_aucun_rappel(self):
+        """14. Un repas planifié annulé ne génère aucun rappel."""
+        from django.utils import timezone
+        import datetime
+        from apps.catalog.models import Categorie, Etablissement, Produit
+        from apps.orders.models import RepasPlanifie
+
+        cat = Categorie.objects.create(nom="Desserts", slug="desserts")
+        resto = Etablissement.objects.create(nom="Pâtisserie Dakar")
+        prod = Produit.objects.create(nom="Gâteau", etablissement=resto, categorie=cat, prix_base=1500)
+
+        now = timezone.now()
+        meal_dt = now + datetime.timedelta(minutes=25)
+
+        RepasPlanifie.objects.create(
+            utilisateur=self.user_a,
+            produit=prod,
+            etablissement=resto,
+            date_planifiee=meal_dt.date(),
+            heure_planifiee=meal_dt.time(),
+            creneau='MIDI',
+            statut=RepasPlanifie.STATUT_ANNULE,
+            prix_total=1500
+        )
+
+        count = NotificationService.traiter_rappels_repas_planifies(self.user_a)
+        self.assertEqual(count, 0)

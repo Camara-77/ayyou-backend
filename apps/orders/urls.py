@@ -4,6 +4,9 @@ from apps.orders.views import (
     AdresseLivraisonListView, AdresseLivraisonDetailView, AdresseLivraisonSetDefaultView,
     CheckoutView, CommandeListView, CommandeDetailView, EstimateDeliveryView
 )
+from apps.orders.views_planning import (
+    PlanningListCreateView, PlanningDetailView
+)
 
 app_name = 'orders'
 
@@ -17,6 +20,10 @@ urlpatterns = [
     path('addresses/', AdresseLivraisonListView.as_view(), name='address-list'),
     path('addresses/<int:pk>/', AdresseLivraisonDetailView.as_view(), name='address-detail'),
     path('addresses/<int:pk>/set-default/', AdresseLivraisonSetDefaultView.as_view(), name='address-set-default'),
+
+    # Planning Client
+    path('planning/', PlanningListCreateView.as_view(), name='planning-list-create'),
+    path('planning/<int:pk>/', PlanningDetailView.as_view(), name='planning-detail'),
 
     # Commandes, Checkout & Estimation
     path('estimate-delivery/', EstimateDeliveryView.as_view(), name='estimate-delivery'),

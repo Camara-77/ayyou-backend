@@ -1,8 +1,41 @@
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .serializers import UserProfileSerializer, UserLocationSerializer
+from .serializers import UserProfileSerializer, UserLocationSerializer, UserPhoneUpdateSerializer
 from .models import ProfilClient
+
+
+class UserPhoneUpdateView(APIView):
+    """
+    API de mise à jour sécurisée du numéro de téléphone du compte utilisateur.
+    PATCH /api/users/me/phone/
+    POST /api/users/me/phone/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, *args, **kwargs):
+        return self._update_phone(request)
+
+    def post(self, request, *args, **kwargs):
+        return self._update_phone(request)
+
+    def _update_phone(self, request):
+        serializer = UserPhoneUpdateSerializer(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_phone = serializer.validated_data['numero_telephone']
+        request.user.numero_telephone = new_phone
+        request.user.save(update_fields=['numero_telephone', 'date_modification'])
+
+        profile_serializer = UserProfileSerializer(request.user)
+        return Response(
+            {
+                "message": "Numéro de téléphone mis à jour avec succès.",
+                "user": profile_serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 class UserProfileView(APIView):

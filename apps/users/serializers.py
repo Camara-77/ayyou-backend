@@ -1,6 +1,30 @@
+import re
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 from .models import Utilisateur, ProfilClient, ProfilLivreur, DocumentLivreur
+
+
+class UserPhoneUpdateSerializer(serializers.Serializer):
+    """
+    Serializer pour la mise à jour sécurisée du numéro de téléphone de l'utilisateur.
+    """
+    numero_telephone = serializers.CharField(required=True, max_length=30)
+
+    def validate_numero_telephone(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError(_("Le numéro de téléphone ne peut pas être vide."))
+
+        cleaned = re.sub(r'[\s\-\(\)]', '', value)
+        if len(cleaned) < 8 or not re.match(r'^\+?[0-9]{8,15}$', cleaned):
+            raise serializers.ValidationError(_("Format de numéro de téléphone invalide."))
+
+        request = self.context.get('request')
+        user = request.user if request else None
+        if user and Utilisateur.objects.filter(numero_telephone=cleaned).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError(_("Ce numéro de téléphone est déjà utilisé par un autre compte."))
+
+        return cleaned
 
 
 class ProfilClientSerializer(serializers.ModelSerializer):

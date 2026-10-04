@@ -77,13 +77,10 @@ class VerifyOtpView(APIView):
         except ValidationError as exc:
             return Response({'errors': exc.detail}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(
-            {
-                "message": "Numéro de téléphone vérifié avec succès.",
-                "verified": True
-            },
-            status=status.HTTP_200_OK
-        )
+        auth_data = LoginService.build_user_auth_response(utilisateur)
+        auth_data["message"] = "Numéro de téléphone vérifié avec succès."
+        auth_data["verified"] = True
+        return Response(auth_data, status=status.HTTP_200_OK)
 
 
 class LoginView(APIView):

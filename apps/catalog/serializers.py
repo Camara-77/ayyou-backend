@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
-from .models import Categorie, Etablissement, Produit, VarianteProduit, OptionProduit, PublicationFeed, LikeProduit
+from .models import Categorie, Etablissement, Produit, VarianteProduit, OptionProduit, PublicationFeed, LikeProduit, AbonnementEtablissement
 
 
 class CategorieSerializer(serializers.ModelSerializer):
@@ -17,6 +17,8 @@ class EtablissementSimplifieSerializer(serializers.ModelSerializer):
     """
     Serializer réseau léger pour l'affichage de l'établissement dans les listes de produits.
     """
+    is_subscribed = serializers.SerializerMethodField()
+
     class Meta:
         model = Etablissement
         fields = [
@@ -28,7 +30,14 @@ class EtablissementSimplifieSerializer(serializers.ModelSerializer):
             'slogan',
             'statut',
             'est_verifie',
+            'is_subscribed',
         ]
+
+    def get_is_subscribed(self, obj) -> bool:
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user and request.user.is_authenticated:
+            return obj.abonnes.filter(utilisateur=request.user).exists()
+        return False
 
 
 class EtablissementSerializer(serializers.ModelSerializer):
@@ -37,6 +46,8 @@ class EtablissementSerializer(serializers.ModelSerializer):
     Protection des données sensibles du propriétaire (jamais de password/hash).
     """
     proprietaire_nom = serializers.SerializerMethodField()
+    followers_count = serializers.SerializerMethodField()
+    is_subscribed = serializers.SerializerMethodField()
 
     class Meta:
         model = Etablissement
@@ -61,6 +72,8 @@ class EtablissementSerializer(serializers.ModelSerializer):
             'specialite',
             'nombre_videos',
             'est_verifie',
+            'followers_count',
+            'is_subscribed',
             'date_creation',
         ]
         read_only_fields = ['id', 'proprietaire', 'note_moyenne', 'nombre_avis', 'date_creation']
@@ -69,6 +82,15 @@ class EtablissementSerializer(serializers.ModelSerializer):
         if obj.proprietaire:
             return obj.proprietaire.get_full_name()
         return ''
+
+    def get_followers_count(self, obj) -> int:
+        return obj.abonnes.count()
+
+    def get_is_subscribed(self, obj) -> bool:
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user and request.user.is_authenticated:
+            return obj.abonnes.filter(utilisateur=request.user).exists()
+        return False
 
     def validate_latitude(self, value):
         if value is not None and not (-90 <= value <= 90):
@@ -250,3 +272,16 @@ class LikeProduitSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(_("Vous avez déjà aimé cette publication."))
 
         return attrs
+
+
+class AbonnementEtablissementSerializer(serializers.ModelSerializer):
+    """
+    Serializer pour gérer les abonnements des clients aux établissements.
+    """
+    etablissement_detail = EtablissementSerializer(source='etablissement', read_only=True)
+
+    class Meta:
+        model = AbonnementEtablissement
+        fields = ['id', 'utilisateur', 'etablissement', 'etablissement_detail', 'date_creation']
+        read_only_fields = ['id', 'utilisateur', 'date_creation']
+

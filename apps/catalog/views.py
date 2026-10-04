@@ -11,7 +11,8 @@ from .models import (
     Etablissement,
     Produit,
     PublicationFeed,
-    LikeProduit
+    LikeProduit,
+    AbonnementEtablissement
 )
 from .serializers import (
     CategorieSerializer,
@@ -19,7 +20,8 @@ from .serializers import (
     ProduitListSerializer,
     ProduitDetailSerializer,
     PublicationFeedSerializer,
-    LikeProduitSerializer
+    LikeProduitSerializer,
+    AbonnementEtablissementSerializer
 )
 from .services import CloudinaryFeedService
 from .search_engine import CatalogSearchEngine
@@ -91,10 +93,10 @@ class EtablissementListView(APIView):
         paginator = StandardCatalogPagination()
         page = paginator.paginate_queryset(queryset_list, request, view=self)
         if page is not None:
-            serializer = EtablissementSerializer(page, many=True)
+            serializer = EtablissementSerializer(page, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = EtablissementSerializer(queryset_list, many=True)
+        serializer = EtablissementSerializer(queryset_list, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -117,7 +119,7 @@ class EtablissementDetailView(APIView):
             if etablissement.statut_abonnement != Etablissement.STATUT_ABONNEMENT_ACTIF or not etablissement.date_expiration_abonnement or etablissement.date_expiration_abonnement <= now:
                 raise Http404("Établissement non disponible ou abonnement expiré.")
 
-        serializer = EtablissementSerializer(etablissement)
+        serializer = EtablissementSerializer(etablissement, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -234,43 +236,26 @@ class PublicationFeedListView(APIView):
         if etablissement and etablissement.isdigit():
             queryset = queryset.filter(etablissement_id=int(etablissement))
 
+        # Application du Moteur de Recommandation Comportemental Déterministe
+        from apps.recommendations.services import RecommendationService
+        session_id = request.headers.get('X-Session-ID') or request.COOKIES.get('sessionid') or request.query_params.get('session_id')
+        user = request.user if getattr(request.user, 'is_authenticated', False) else None
+        ranked_pubs = RecommendationService.rank_publications(
+            queryset=queryset,
+            user=user,
+            session_id=session_id
+        )
+
         paginator = StandardCatalogPagination()
-        page = paginator.paginate_queryset(queryset, request, view=self)
+        page = paginator.paginate_queryset(ranked_pubs, request, view=self)
 
-        candidate_pubs = list(page) if page is not None else list(queryset)
-        session_id = request.query_params.get('session_id') or request.headers.get('X-Session-ID')
-
-        # 1. Expérimentation contrôlée (A/B Testing V3 vs Chronologique)
-        final_pubs = candidate_pubs
-        if candidate_pubs:
-            try:
-                from apps.telemetry.ml.experiment_service import RecommendationExperimentService
-                final_pubs = RecommendationExperimentService.process_feed_candidates(
-                    candidate_pubs=candidate_pubs,
-                    user=request.user,
-                    session_id=session_id
-                )
-            except Exception:
-                final_pubs = candidate_pubs
-
-        # 2. Exécution parallèle du Shadow Mode si activé dans les settings
-        if candidate_pubs:
-            try:
-                from apps.telemetry.ml.shadow_service import RecommendationShadowService
-                candidate_ids = [p.id for p in candidate_pubs]
-                RecommendationShadowService.run_shadow_scoring(
-                    publication_ids=candidate_ids,
-                    user=request.user,
-                    session_id=session_id
-                )
-            except Exception:
-                pass
+        candidate_pubs = list(page) if page is not None else ranked_pubs
 
         if page is not None:
-            serializer = PublicationFeedSerializer(final_pubs, many=True, context={'request': request})
+            serializer = PublicationFeedSerializer(candidate_pubs, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
 
-        serializer = PublicationFeedSerializer(final_pubs, many=True, context={'request': request})
+        serializer = PublicationFeedSerializer(candidate_pubs, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -330,6 +315,11 @@ class PublicationFeedListView(APIView):
         produit = None
         if produit_id:
             produit = Produit.objects.filter(pk=produit_id, etablissement=etablissement).first()
+            if not produit:
+                return Response(
+                    {"detail": _("Le plat de référence sélectionné n'appartient pas à votre établissement.")},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         publication = PublicationFeed.objects.create(
             etablissement=etablissement,
@@ -340,6 +330,48 @@ class PublicationFeedListView(APIView):
             duree_video=upload_data.get("duree_video", "2:00"),
             max_duree_secondes=180
         )
+
+        # Dispatch In-App Notifications to establishment subscribers
+        try:
+            from apps.notifications.models import Notification
+            from apps.notifications.webpush_service import WebPushService
+            subscribers = AbonnementEtablissement.objects.filter(etablissement=etablissement).select_related('utilisateur')
+            titre_video = produit.nom if produit else "une nouvelle vidéo"
+            for sub in subscribers:
+                NotificationService.creer_notification(
+                    utilisateur=sub.utilisateur,
+                    titre=f"{etablissement.nom} a publié",
+                    message=f"Secrets de préparation et nouveauté : {titre_video}",
+                    type_notification=Notification.TYPE_PUBLICATION_VIDEO,
+                    canal=Notification.CANAL_IN_APP,
+                    reference_type='PublicationFeed',
+                    reference_id=str(publication.id),
+                    metadata={
+                        'publication_id': publication.id,
+                        'etablissement_nom': etablissement.nom,
+                        'etablissement_id': etablissement.id,
+                        'thumbnail_url': publication.media_url
+                    }
+                )
+
+                # Expédition Web Push PWA (avec vérification des préférences & Deep Link /feed/video/:id)
+                try:
+                    WebPushService.send_push_to_user(
+                        utilisateur_id=sub.utilisateur_id,
+                        titre=f"🎥 {etablissement.nom} a publié une vidéo",
+                        message=f"Découvrez : {titre_video}",
+                        url=f"/feed/video/{publication.id}",
+                        category="VIDEO",
+                        data={
+                            "url": f"/feed/video/{publication.id}",
+                            "publication_id": publication.id,
+                            "etablissement_id": etablissement.id
+                        }
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         serializer = PublicationFeedSerializer(publication, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -486,3 +518,90 @@ class LikeProduitDetailView(APIView):
 
         like.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AbonnementListView(APIView):
+    """
+    GET /api/catalog/subscriptions/
+    POST /api/catalog/subscriptions/
+    DELETE /api/catalog/subscriptions/
+    Consulter les abonnements du client ou s'abonner / se désabonner d'un établissement.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        abonnements = AbonnementEtablissement.objects.filter(
+            utilisateur=request.user
+        ).select_related('etablissement').order_by('-date_creation')
+        serializer = AbonnementEtablissementSerializer(abonnements, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        etablissement_id = request.data.get('etablissement_id') or request.data.get('etablissement')
+        if not etablissement_id:
+            return Response(
+                {"detail": _("L'identifiant de l'établissement 'etablissement_id' est obligatoire.")},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        etablissement = get_object_or_404(Etablissement, pk=etablissement_id)
+
+        abonnement, created = AbonnementEtablissement.objects.get_or_create(
+            utilisateur=request.user,
+            etablissement=etablissement
+        )
+
+        serializer = AbonnementEtablissementSerializer(abonnement, context={'request': request})
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
+
+    def delete(self, request):
+        etablissement_id = (
+            request.data.get('etablissement_id') or
+            request.data.get('etablissement') or
+            request.query_params.get('etablissement_id') or
+            request.query_params.get('etablissement')
+        )
+        if not etablissement_id:
+            return Response(
+                {"detail": _("L'identifiant de l'établissement 'etablissement_id' est obligatoire.")},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        abonnement = AbonnementEtablissement.objects.filter(
+            utilisateur=request.user,
+            etablissement_id=etablissement_id
+        ).first()
+
+        if not abonnement:
+            return Response({"detail": _("Abonnement introuvable.")}, status=status.HTTP_404_NOT_FOUND)
+
+        abonnement.delete()
+        return Response({"detail": _("Désabonnement effectué avec succès.")}, status=status.HTTP_200_OK)
+
+
+class AbonnementDetailView(APIView):
+    """
+    DELETE /api/catalog/subscriptions/{etablissement_id}/
+    Se désabonner d'un établissement via son ID d'établissement ou d'abonnement.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, pk):
+        abonnement = AbonnementEtablissement.objects.filter(
+            utilisateur=request.user,
+            etablissement_id=pk
+        ).first()
+
+        if not abonnement:
+            abonnement = AbonnementEtablissement.objects.filter(
+                utilisateur=request.user,
+                pk=pk
+            ).first()
+
+        if not abonnement:
+            return Response({"detail": _("Abonnement introuvable.")}, status=status.HTTP_404_NOT_FOUND)
+
+        abonnement.delete()
+        return Response({"detail": _("Désabonnement effectué avec succès.")}, status=status.HTTP_200_OK)
+
